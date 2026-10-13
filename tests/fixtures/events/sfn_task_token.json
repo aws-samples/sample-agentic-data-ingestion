@@ -1,0 +1,23 @@
+{
+  "TaskToken": "AAAAKgAAAAIAAAAAAAAAAYGHMBjIwfThUBYGHMBjIwfThUBYGHMBjIwfThUB",
+  "Input": {
+    "pipeline_id": "pipeline-001",
+    "run_id": "run-001",
+    "approval_type": "schema_mapping",
+    "step_name": "SchemaMapping",
+    "source_schema": {
+      "fields": [
+        {"name": "id", "type": "integer"},
+        {"name": "name", "type": "string"},
+        {"name": "email", "type": "string"}
+      ]
+    },
+    "target_schema": {
+      "fields": [
+        {"name": "customer_id", "type": "integer"},
+        {"name": "full_name", "type": "string"},
+        {"name": "email_address", "type": "string"}
+      ]
+    }
+  }
+}

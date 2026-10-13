@@ -1,0 +1,6 @@
+person_id	forename	surname	email_addr	cell_phone	join_date	membership	tier_level	annual_revenue
+13001	Dante	Alighieri	dante.a@email.com	555-1301	2024-12-01	active	platinum	52000.00
+13002	Sakura	Yamamoto	sakura.y@email.com	555-1302	2024-12-02	active	gold	28000.00
+13003	Bjorn	Eriksson	bjorn.e@email.com	555-1303	2024-12-03	suspended	silver	12000.00
+13004	Amara	Okafor	amara.o@email.com	555-1304	2024-12-04	active	platinum	67000.00
+13005	Ravi	Krishnan	ravi.k@email.com	555-1305	2024-12-05	active	gold	35000.00

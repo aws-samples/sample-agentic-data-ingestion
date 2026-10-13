@@ -1,0 +1,6 @@
+cust_id,fname,lname,email,mobile,created_date,state,premium_member
+5001,Brandon,Wright,brandon.wright@email.com,555-0501,2024-05-01,active,true
+5002,Melissa,Lopez,melissa.lopez@email.com,555-0502,2024-05-02,active,false
+5003,Justin,Hill,j.hill@email.com,555-0503,2024-05-03,inactive,true
+5004,Rachel,Scott,rachel.s@email.com,555-0504,2024-05-04,active,false
+5005,Tyler,Green,tyler.green@email.com,555-0505,2024-05-05,pending,true

@@ -1,0 +1,12 @@
+{
+  "approval_id": "approval-xyz789",
+  "pipeline_key": "pipeline-abc123",
+  "run_id": "exec-run-002",
+  "approval_type": "schema_mapping",
+  "status": "approved",
+  "created_at": "2024-01-16T09:01:00Z",
+  "decided_at": "2024-01-16T09:10:00Z",
+  "decided_by": "developer@example.com",
+  "comment": "Mapping looks correct, approved.",
+  "gate_name": "schema_mapping_approval"
+}

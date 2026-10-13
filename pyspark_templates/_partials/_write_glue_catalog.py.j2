@@ -1,0 +1,24 @@
+{# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+   SPDX-License-Identifier: MIT-0 #}    # Convert to DynamicFrame and write to Glue Catalog
+{% if partition_columns %}
+    dynamic_frame = DynamicFrame.fromDF(df_transformed.repartition({{ partition_columns }}), glue_context, "output")
+{% else %}
+    dynamic_frame = DynamicFrame.fromDF(df_transformed, glue_context, "output")
+{% endif %}
+    logger.info(f"Writing to Glue Catalog: {args['{{ key_prefix | default("") }}database_name']}.{args['{{ key_prefix | default("") }}table_name']}")
+{% if write_mode == 'append' %}
+    glue_context.write_dynamic_frame.from_catalog(
+        frame=dynamic_frame,
+        database=args['{{ key_prefix | default("") }}database_name'],
+        table_name=args['{{ key_prefix | default("") }}table_name'],
+        additional_options={"enableUpdateCatalog": True},
+    )
+{% else %}
+    glue_context.write_dynamic_frame.from_catalog(
+        frame=dynamic_frame,
+        database=args['{{ key_prefix | default("") }}database_name'],
+        table_name=args['{{ key_prefix | default("") }}table_name'],
+    )
+{% endif %}
+
+    logger.info("Write to Glue Catalog complete")

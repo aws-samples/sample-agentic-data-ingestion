@@ -1,0 +1,6 @@
+customer_id,first_name,last_name,email,phone,registration_date,status
+2001,Lisa,Anderson,lisa.anderson@email.com,555-0201,2024-02-01,active
+2002,Robert,Taylor,robert.t@email.com,555-0202,2024-02-02,active
+2003,Jennifer,Martinez,j.martinez@email.com,555-0203,2024-02-03,inactive
+2004,William,Garcia,w.garcia@email.com,555-0204,2024-02-04,active
+2005,Amanda,Rodriguez,amanda.r@email.com,555-0205,2024-02-05,pending

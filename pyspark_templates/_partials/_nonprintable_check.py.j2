@@ -1,0 +1,218 @@
+{#- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    SPDX-License-Identifier: MIT-0 -#}
+{#- _partials/_nonprintable_check.py.j2 — the non-printable character check
+    (p64 R8.1/R8.2, task 2d.2).
+
+    IT FLAGS. IT DOES NOT QUARANTINE. Every row containing a control character
+    continues to the target; what this block produces is a COUNT, a log line, and
+    (where a DQ report row exists) one `checks[]` entry carrying status
+    `warning`. Nothing is diverted, `rows_quarantined` is untouched, and
+    `overall_status` cannot move. That was p64 task 2d.1's decision and its four
+    reasons are recorded in `_partials/_data_quality.py.j2`'s header rather than
+    duplicated here — that is the file a reader arrives at when they wonder why a
+    second row-level check does not reuse the quarantine write, so the argument
+    lives beside the mechanism it declines to use. The short form: no DQDL rule
+    can fail on a control character, so the quarantine write is not even on a
+    live path for this signal.
+
+    TASK 2d.2's OWN TEXT SAYS "feeding the same quarantine prefix and counters
+    (R8.3)", AND THAT HALF IS SUPERSEDED BY 2d.1. Recorded here because the
+    tasks file still carries the older wording and a reader comparing the two
+    will otherwise think this partial under-delivers. R8.3 is written
+    conditionally — "IF the check quarantines" — and R8.1 permits either arm
+    ("flags or quarantines"), so the conditional simply does not fire. R8.3's
+    "same report" IS honoured: the finding lands on the same
+    `(run_id, "data_quality")` row, as a `checks[]` entry.
+
+    WHY THE GUARD IS ITS OWN `quality_config` KEY AND NOT `data_quality_enabled`.
+    This is 2d.1's reason (2) and it is the one that decides where this file sits
+    in the render. `code_assembly.resolve_data_quality_enabled` defaults the DQ
+    gate OFF for every template except `glue_job_s3_tables.py.j2`, so a check
+    hung off that gate would render NOTHING for a JDBC- or Parquet-target
+    pipeline that opted into it — an opt-in that silently does nothing, which is
+    the defect class p64 exists to remove. `nonprintable_check_enabled` is
+    independent, so the check renders on all five templates on its own terms.
+
+    THE COST OF THAT INDEPENDENCE, STATED RATHER THAN HIDDEN: the two halves of
+    this feature have different reach. The DETECTION renders wherever the key is
+    set; the REPORT ENTRY renders only where a DQ report row is being written,
+    i.e. inside `_data_quality.py.j2`'s `data_quality_enabled and dqdl_rules`
+    arm. So a pipeline that opts into this check with DQ off gets the count and
+    the log line and NO durable record of the finding — the row those checks
+    would attach to is not written at all by that pipeline. That is not a gap
+    this partial can close: the report row is a single `put_item` on a
+    PutItem-only role (`LGR-9e76249-3`), so a second writer would clobber the
+    first rather than merge with it. Closing it means giving the check its own
+    row under its own `step_name`, which is a response-shape decision and
+    therefore 2d.3's or a later task's, not this one's.
+
+    ZERO RENDERED BYTES WHEN DISABLED, exactly as `_partials/_dedup.py.j2` is,
+    and the whitespace arithmetic is the same one: the caller's `{%- include %}`
+    strips the newline that ended the line above it, the outer `{%- if %}` and
+    the blank line opening its body restore one when enabled, and
+    `{%- endif -%}` strips the trailing one. Disabled, they cancel to nothing, so
+    every pipeline that has not opted in renders a BYTE-IDENTICAL job and the ten
+    stored `tests/fixtures/golden_scripts/` snapshots stay valid untouched. Do not
+    tidy either side's minus signs independently — they are one expression.
+
+    THE GUARD IS `is mapping and … is true`, AND IT IS DELIBERATELY **NOT** THE
+    `is defined and` IDIOM `data_quality_enabled` AND `dqdl_rules` USE.
+    `_dedup.py.j2`'s header carries the full account; the short version is that
+    `is defined` was tried there, and FAILED, because
+    `test_dq_template_vars_contract.py`'s
+    `test_dq_block_survives_a_second_jinja2_copy_in_sys_modules` renders all five
+    templates with no `quality_config` and with two jinja2 copies loaded — under
+    which `Context.resolve_or_missing` hands back one copy's `missing` sentinel
+    while the compiled template tests identity against the other's. `_MissingType`
+    is not an `Undefined`, so `is defined` answers True and the read behind it
+    raises. `is mapping` is an `isinstance` check against `abc.Mapping`, which
+    consults no sentinel at all, so its answer does not depend on how many jinja2
+    copies are loaded. It also fails CLOSED in every case: unset, `None`, a scalar
+    or a dict without the key all leave the check off, and nothing turns it on by
+    accident.
+
+    `.get(...)` for the same reason, and it is NOT the default-value filter
+    do-NOT 6 forbids: that filter decides by asking whether its input is an
+    `Undefined` instance, which is the identity question two jinja2 copies make
+    unanswerable, whereas `.get` is a plain method on a value `is mapping` has
+    already established is a real dict. That filter's name is deliberately not
+    spelled anywhere in this file — the fence over it is a substring count across
+    the whole file, so a header naming it would be counted as a violation of
+    itself (`LGR-b46a5bb-4`). Both sibling partials carry the same note for the
+    same reason.
+
+    `is true` rather than plain truthiness mirrors `resolve_quality_config`'s own
+    rule that only an explicit `bool` opts in, so the string `"false"` cannot mean
+    enabled here either.
+
+    THE CHARACTER CLASS IS C0 MINUS TAB, NEWLINE AND CARRIAGE RETURN, WHICH IS
+    R8.1's OWN ENUMERATION READ LITERALLY: U+0000-U+0008, U+000B, U+000C and
+    U+000E-U+001F. NUL, BEL and ESC are the three R8.1 names and all three are in
+    it. Two things a reader will expect and NOT find, both deliberate:
+
+      * DEL (U+007F) is excluded. It is non-printable, but it is not a C0
+        control — C0 is 0x00-0x1F — and R8.1's parenthetical defines the class as
+        "the rest of C0 except tab/newline/carriage return". Widening beyond the
+        requirement is the kind of thing that is invisible until it flags a
+        column somebody relies on.
+      * The C1 range (U+0080-U+009F) is excluded for the same reason, plus a
+        second: in a mis-decoded Latin-1 or CP1252 file those bytes are ordinary
+        printable characters, so flagging them would report an encoding opinion
+        as a data defect.
+
+    The asymmetry runs one way, which is what makes the narrow reading the safe
+    one: widening the class later is additive — a pipeline that flagged nothing
+    starts flagging something, and nothing it already reported changes meaning.
+    Narrowing it later silently stops reporting a finding an operator has been
+    watching. So the class starts at exactly what R8.1 asked for.
+
+    TAB, NEWLINE AND CARRIAGE RETURN ARE EXCLUDED BY THE REQUIREMENT AND ALSO BY
+    ARITHMETIC: they are the three C0 characters a CSV or JSON source legitimately
+    carries inside a quoted field, so including them would flag a large fraction
+    of every text-sourced pipeline on its first run and the check would be turned
+    off rather than read.
+
+    THE PATTERN IS A RAW STRING IN THE EMITTED PYTHON, AND THAT IS LOAD-BEARING.
+    `rlike` passes its argument to the JVM as a Java regex, so the `\x` escapes
+    must survive Python's own string parsing to reach it. A raw literal keeps them
+    literal. Written as a normal string, `"[\x00-\x08…]"` would make PYTHON embed
+    real control characters in the pattern text — which happens to work for a
+    plain range but is unreadable, and one `\x0B` away from a pattern that means
+    something else. Do not "simplify" the `r` prefix away.
+
+    ONLY STRING COLUMNS ARE EXAMINED, and the list is derived at RUNTIME from
+    `df_transformed.dtypes` rather than from the pipeline's schema. Three
+    consequences worth stating:
+
+      * No identifier from the pipeline record reaches the emitted code, so this
+        partial opens NO generated-code sink — there is no name here for
+        `validate_identifier` to guard, and R8.5 / do-NOT 7's ordering rule is
+        untouched by it. `LGR-819980f-1` (INVARIANT) is likewise unaffected: the
+        only render variable interpolated is `quality_config`, whose members are
+        two booleans and a list of already-allowlisted column names, and nothing
+        is added to the `getResolvedOptions` key list.
+      * A control character can only live in a string column, so a numeric or
+        timestamp column has nothing to examine and skipping it costs no coverage.
+      * A frame with no string columns at all runs no Spark action and reports
+        zero, rather than building an empty predicate. `filter(None)` would raise;
+        the guard is not decoration.
+
+    ONE EXTRA SPARK ACTION, PAID ONLY INSIDE THE ENABLED ARM. The `count()` is a
+    full pass over the frame. A pipeline that has not opted in pays nothing, which
+    is the same bargain `_dedup.py.j2`'s two counts strike.
+
+    WHERE THE CALLER MUST PUT IT: AFTER the DQ 'evaluate' include site and BEFORE
+    `transformed_count`. Both halves matter and neither is a convenience.
+
+      * AFTER 'evaluate', because that stage rebinds `df_transformed` to the
+        Passed split (`df_transformed = _dq_passed_df`). Counting before it would
+        count rows that are about to be quarantined and never written, so the
+        number would not answer "how much of what I wrote is contaminated" — it
+        would blame the target for rows the target never received.
+      * BEFORE `transformed_count`, because the report entry is assembled in
+        `_data_quality.py.j2`'s 'report' stage, which sits after that count. The
+        local this block leaves behind must already exist by then.
+      * It does not matter whether this sits before or after the dedup drop, since
+        it neither reads nor writes the frame — but placing it after 'evaluate'
+        puts it after dedup anyway, because dedup precedes 'evaluate'.
+
+    THE LOCAL IT LEAVES BEHIND is `_adi_np_rows`, read by
+    `_partials/_data_quality.py.j2`'s 'report' stage under the SAME guard
+    expression as this file's. That pairing is the one thing to be careful of when
+    editing either: the two guards must stay identical, or the report stage
+    dereferences a name that was never defined. It degrades to a caught exception
+    and a `logger.warning` rather than a lost row — the whole report write is
+    inside `except Exception as _ddb_err` — but the finding would vanish
+    silently, so `test_nonprintable_check_all_targets.py` asserts the include site
+    exists on all five templates.
+
+    NO STAGE VARIABLE, for the reason `_dedup.py.j2`'s header gives: this partial
+    has exactly one emission point, so a stage argument would be ceremony with a
+    second failure mode. The report entry is emitted inline by the DQ partial
+    under its own guard rather than by a second stage here, which also keeps this
+    file's whole context surface to the single variable `quality_config` — so
+    `test_dq_template_vars_contract.py`'s `P64_PARTIALS` fence covers it without
+    needing new exclusions.
+
+    REQUIRED CONTEXT VARIABLE: `quality_config`, assigned unconditionally in
+    `code_assembly.generate_code`'s `template_vars` from
+    `resolve_quality_config`, which returns every recognised key on every call
+    (R6.5 / do-NOT 6, design C7).
+
+    ALL of the rationale lives in this Jinja comment and none of it in the
+    emitted Python, per `LGR-b46a5bb-4` (template / ratified): this repo's
+    template fences are substring assertions over the RENDERED output, so naming
+    a fenced token in emitted Python would be counted as an occurrence of it.
+-#}
+{%- if quality_config is mapping and quality_config.get("nonprintable_check_enabled") is true %}
+
+    # === Non-printable character check (p64 R8.1/R8.2) ===
+    # This check FLAGS: every row below continues to the target. It diverts
+    # nothing, adds nothing to rows_quarantined, and cannot change the data
+    # quality verdict. The finding is reported as a `warning` entry in the data
+    # quality report's checks[] where that report is written.
+    # C0 controls except tab (0x09), newline (0x0A) and carriage return (0x0D).
+    # Only string columns can carry one, and the list is read off the frame at
+    # runtime so no pipeline-supplied name reaches this code.
+    _adi_np_rows = 0
+    _adi_np_columns = [_adi_np_name for _adi_np_name, _adi_np_type in df_transformed.dtypes if _adi_np_type == "string"]
+    if _adi_np_columns:
+        from pyspark.sql import functions as _adi_np_functions
+
+        # Raw string: the escapes must survive Python and reach Spark's rlike as
+        # Java regex source.
+        _adi_np_pattern = r"[\x00-\x08\x0B\x0C\x0E-\x1F]"
+        _adi_np_match = None
+        for _adi_np_column in _adi_np_columns:
+            _adi_np_term = _adi_np_functions.col(_adi_np_column).rlike(_adi_np_pattern)
+            _adi_np_match = _adi_np_term if _adi_np_match is None else (_adi_np_match | _adi_np_term)
+        _adi_np_rows = df_transformed.filter(_adi_np_match).count()
+    if _adi_np_rows > 0:
+        logger.warning(
+            f"Non-printable character check: {_adi_np_rows} row(s) contain control characters "
+            f"across {len(_adi_np_columns)} string column(s) — flagged, not quarantined"
+        )
+    else:
+        logger.info(f"Non-printable character check: clean across {len(_adi_np_columns)} string column(s)")
+    # === End Non-printable character check ===
+{%- endif -%}

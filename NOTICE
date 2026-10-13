@@ -1,0 +1,76 @@
+Agentic Data Ingestion
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+This project is licensed under the MIT No Attribution license (MIT-0). See
+LICENSE.
+
+------------------------------------------------------------------------------
+Third-party components
+------------------------------------------------------------------------------
+
+This distribution includes two third-party components licensed under the
+Apache License, Version 2.0. THIRD-PARTY-LICENSES describes both in more
+detail, and summarises the licences of the declared dependencies that are
+fetched at install time and not redistributed here.
+
+1. AWS DataProcessing MCP Server (vendored source, modified)
+
+    Upstream NOTICE:
+
+        awslabs.aws-dataprocessing-mcp-server
+        Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+    Upstream:  https://github.com/awslabs/mcp
+               (src/aws-dataprocessing-mcp-server)
+    Version:   0.1.16 (upstream commit 57d7d67b0b51f57475321e111f7d76677740319f)
+    Location:  mcp/vendor/awslabs_aws_dataprocessing_mcp_server/
+    License:   Apache License, Version 2.0
+               A full copy is retained at
+               mcp/vendor/awslabs_aws_dataprocessing_mcp_server/LICENSE
+
+    This vendored copy has been MODIFIED relative to upstream. Every modified
+    file carries a notice saying so, and the full list is in
+    mcp/vendor/awslabs_aws_dataprocessing_mcp_server/PROVENANCE.md. In summary:
+
+      * handlers/commons/common_resource_handler.py gained a
+        register_iam_mutation_tools constructor parameter, so that IAM-mutation
+        tools can be withheld from registration.
+      * In 12 handler modules (athena, emr and glue), the return annotations of
+        the tool methods were changed to mcp.types.CallToolResult.
+      * handlers/emr/__init__.py was added as a package marker.
+      * The whole tree was reformatted with this project's ruff configuration,
+        and it was trimmed to the modules this project imports; upstream
+        server.py, packaging files, tests and README were not vendored.
+
+    Per-file Apache-2.0 licence headers are retained in the vendored source.
+
+    Two files outside the vendored tree adapt upstream's
+    awslabs/aws_dataprocessing_mcp_server/server.py (same commit, same
+    licence), and each carries a notice saying so:
+
+      * mcp/data_processing/server.py (handler imports and registration;
+        modified for AgentCore, IAM-mutation tools withheld)
+      * mcp/analytics_server/server.py (split from the above; Athena and EMR
+        tools only)
+
+2. Amazon S3 Tables Catalog for Apache Iceberg (binary, unmodified)
+
+    Version:   0.1.5
+    Location:  deploy-cdk/glue-jars/s3-tables-catalog-for-iceberg-runtime-0.1.5.jar
+    License:   Apache License, Version 2.0 (META-INF/LICENSE.txt in the archive)
+
+    A shaded runtime JAR, redistributed byte for byte as published on Maven
+    Central. It bundles further third-party libraries, and the attribution
+    notices for them travel inside the archive:
+
+      * META-INF/NOTICE        Apache HttpClient
+                               Copyright 1999-2020 The Apache Software Foundation
+      * META-INF/NOTICE.txt    Apache Commons Configuration
+                               Copyright 2001-2024 The Apache Software Foundation
+      * META-INF/FastDoubleParser-NOTICE, FastDoubleParser-LICENSE and
+        bigint-LICENSE         for the copy of jackson-core shaded into the
+                               AWS SDK for Java
+      * META-INF/THIRD-PARTY   Apache Iceberg's attribution notes
+
+    Both Apache NOTICE files state: "This product includes software developed
+    at The Apache Software Foundation (www.apache.org)."

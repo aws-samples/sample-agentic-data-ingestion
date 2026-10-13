@@ -1,0 +1,6 @@
+cust_id,fname,lname,email_address,phone_number,signup_date,account_status,country
+6001,Anna,Kowalski,anna.k@email.com,+1-555-0601,01/15/2024,Active,US
+6002,Marco,Rossi,marco.rossi@email.com,+1-555-0602,02/20/2024,Active,IT
+6003,Yuki,Tanaka,yuki.t@email.com,+81-555-0603,03/10/2024,Inactive,JP
+6004,Priya,Sharma,priya.sharma@email.com,+91-555-0604,04/05/2024,Active,IN
+6005,Carlos,Mendez,carlos.m@email.com,+52-555-0605,05/12/2024,Pending,MX

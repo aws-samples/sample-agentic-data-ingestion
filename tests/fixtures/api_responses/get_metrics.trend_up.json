@@ -1,0 +1,132 @@
+{
+  "generated_at": "2026-08-12T12:00:00+00:00",
+  "infrastructure": {
+    "agentcore": {
+      "availability": null,
+      "response_time_ms": null,
+      "status": "unknown"
+    },
+    "dynamodb": {
+      "read_capacity_per_hour": 0.0,
+      "status": "healthy",
+      "write_capacity_per_hour": 0.0
+    },
+    "lambda": {
+      "error_rate": 0,
+      "invocations_per_minute": 0.0,
+      "status": "healthy"
+    },
+    "s3": {
+      "requests_per_minute": null,
+      "status": "healthy",
+      "storage_used_bytes": null
+    }
+  },
+  "performance": {
+    "agent_latency_ms": null,
+    "determined_from": {
+      "agent_latency_ms": "stage_duration_metric_absent",
+      "agentcore_availability": "agent_lambda_error_metrics_absent",
+      "lines_ingested_24h": "load_metrics_rows_absent",
+      "monthly_cost": "glue_run_cost_metric",
+      "monthly_cost_basis": "glue_run_cost_metric",
+      "overall_success_rate": "sfn_execution_metrics_absent",
+      "processing_rate": "load_metrics_rows_absent",
+      "rejected_at_approval": "pipeline_failure_records",
+      "requests_per_minute": "s3_request_metrics_absent",
+      "stage_failure_attribution": "pipeline_failure_records",
+      "storage_used_bytes": "s3_bucket_size_absent",
+      "terminal_counts": "sfn_execution_metrics"
+    },
+    "failed_pipelines": 0,
+    "lines_ingested_24h": null,
+    "measurement": {
+      "agent_latency_ms": "AgenticDataIngestion/Pipeline Pipeline.StageDuration, agent stages (Average)",
+      "failed_pipelines": "AWS/States ExecutionsFailed (Sum), less the runs rejected at approval — failed executions, not distinct pipelines. An approval nobody answered in time still counts as failed",
+      "lines_ingested_24h": "rows_written on the Glue job's load_metrics rows in the selected window, counted only where the job confirmed the target write — every source type; runs that stopped before Glue, and runs from before the job recorded counts, contribute nothing",
+      "monthly_cost": "AgenticDataIngestion/Pipeline GlueJob.RunCostEstimate (Sum over the selected window) — a Glue DPU-minutes estimate with a 10-minute per-run minimum, never measured spend",
+      "overall_success_rate": "AWS/States ExecutionsSucceeded ÷ (Succeeded + Failed + Aborted + TimedOut) (Sum), with the runs rejected at approval taken out of Failed — a reviewer's rejection is not a failure. If the rejections could not be read, nothing is taken out",
+      "processing_rate": "that same rows-loaded count ÷ wall-clock hours in the selected window — an average over the window, not the speed of any one run",
+      "rejected_at_approval": "pipeline_failure records in the selected window whose error_name is ApprovalRejected — runs a reviewer rejected at an approval gate. Not counted in Failed Executions or the Success Rate"
+    },
+    "missing": [
+      "agent_latency_ms",
+      "agentcore_availability",
+      "lines_ingested_24h",
+      "overall_success_rate",
+      "processing_rate",
+      "requests_per_minute",
+      "storage_used_bytes"
+    ],
+    "monthly_cost": 0.59,
+    "monthly_cost_basis": {
+      "dpu_minimum_minutes": 10,
+      "metric": "GlueJob.RunCostEstimate",
+      "note": "estimate derived from Glue DPU-minutes with a 10-minute per-run minimum; not measured spend",
+      "rate_usd_per_dpu_hour": 0.44,
+      "runs": 4,
+      "window_end": "2026-08-12T12:00:00+00:00",
+      "window_start": "2026-08-11T12:00:00+00:00"
+    },
+    "overall_success_rate": null,
+    "processing_rate": null,
+    "rejected_at_approval": 0,
+    "stage_failure_attribution": {
+      "already_counted_by_stage_row": 0,
+      "attributed_to_stage": 0,
+      "counted_into_stage_errors": 0,
+      "failed_executions": 0,
+      "failed_executions_without_a_record": 0,
+      "failure_records": 0,
+      "rejected_at_approval": 0,
+      "rejected_by_step": {},
+      "unattributed": 0,
+      "unattributed_by_step": {}
+    },
+    "terminal_counts": {
+      "aborted": 0,
+      "failed": 0,
+      "succeeded": 0,
+      "timed_out": 0
+    },
+    "trends": {
+      "agent_latency": "not_established",
+      "cost": "up",
+      "ingestion": "not_established",
+      "success": "not_established"
+    }
+  },
+  "period": "24h",
+  "stages": {
+    "code_generation": {
+      "avg_time_ms": null,
+      "error_count": 0,
+      "success_count": 0
+    },
+    "infrastructure": {
+      "avg_time_ms": null,
+      "error_count": 0,
+      "success_count": 0
+    },
+    "pipeline_run": {
+      "avg_time_ms": null,
+      "error_count": 0,
+      "success_count": 0
+    },
+    "quality_checks": {
+      "avg_time_ms": null,
+      "error_count": 0,
+      "success_count": 0
+    },
+    "schema_extract": {
+      "avg_time_ms": null,
+      "error_count": 0,
+      "success_count": 0
+    },
+    "schema_mapping": {
+      "avg_time_ms": null,
+      "error_count": 0,
+      "success_count": 0
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "Records": [
+    {
+      "messageId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "receiptHandle": "AQEBwJnKyrHigUMZj6rYigCgxlaS3SLy0a...",
+      "body": "{\"version\":\"0\",\"id\":\"a1b2c3d4-e5f6-7890-abcd-ef1234567890\",\"detail-type\":\"Object Created\",\"source\":\"aws.s3\",\"account\":\"123456789012\",\"time\":\"2024-01-15T10:30:00Z\",\"region\":\"us-east-1\",\"resources\":[\"arn:aws:s3:::adi-source\"],\"detail\":{\"version\":\"0\",\"bucket\":{\"name\":\"agentic-data-ingestion-source\"},\"object\":{\"key\":\"pipeline-001/customer_data.csv\",\"size\":1024,\"etag\":\"d41d8cd98f00b204e9800998ecf8427e\",\"sequencer\":\"00617F08299329D189\"},\"request-id\":\"N4N7GDK58NMKJ12R\",\"requester\":\"123456789012\",\"source-ip-address\":\"10.0.0.1\",\"reason\":\"PutObject\"}}",
+      "attributes": {
+        "ApproximateReceiveCount": "1",
+        "SentTimestamp": "1705312200000",
+        "SenderId": "AROAEXAMPLEID:example",
+        "ApproximateFirstReceiveTimestamp": "1705312200100"
+      },
+      "messageAttributes": {},
+      "md5OfBody": "d41d8cd98f00b204e9800998ecf8427e",
+      "eventSource": "aws:sqs",
+      "eventSourceARN": "arn:aws:sqs:us-east-1:123456789012:agentic-data-ingestion-file-ingestion",
+      "awsRegion": "us-east-1"
+    }
+  ]
+}

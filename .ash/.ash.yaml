@@ -1,0 +1,511 @@
+# ASH (Automated Security Helper) configuration.
+#
+# Every suppression below is path-scoped and carries a reason. Nothing is
+# suppressed globally, and nothing is suppressed that was not individually
+# inspected — a finding we cannot justify in writing is a real finding and is
+# left to fail.
+#
+# ACCEPTED by the owner on 2026-10-07 and suppressed below with an expiration
+# of 2027-01-07, so each one resurfaces in three months for a fresh look.
+# Before that date they were deliberately left failing until a reviewer
+# accepted them; that acceptance is now recorded here, in the scan TRIAGE.md
+# and in the threat model (internal-docs/security/threat-model.md, Appendix D).
+# Each suppression names the exact rule id and file, so a NEW advisory on the
+# same package, or the same rule anywhere else, still fires.
+#   * grype on deploy-cdk/glue-jars/s3-tables-catalog-for-iceberg-runtime-0.1.5.jar
+#     — Apache Commons DoS advisories in classes the shaded JAR bundles. The
+#     newest release (0.1.8) bundles the same commons versions, so upgrading
+#     does not clear them. The JAR runs inside the Glue job, on the pipeline's
+#     own data.
+#   * semgrep/opengrep npm-missing-minimum-release-age on the two .npmrc files.
+#     The `min-release-age` setting needs npm 11.10 or later; the toolchain is
+#     npm 10, which warns on the unknown key on every command.
+#   * bandit B701 jinja2_autoescape_false at the five Environment() calls that
+#     render PySpark source and plain-text prompts (see the B701 note below).
+# What to do when one resurfaces: check whether a fix has shipped (a catalog
+# JAR with patched commons, npm 11.10 in the toolchain). If not, re-accept with
+# a new date; do not drop the expiration.
+#
+# Formerly on this list and now FIXED, so they should no longer fire:
+#   * npm-audit / grype: react-router 6, GHSA-wrjc-x8rr-h8h6 (open redirect via
+#     a backslash in <Link>/useNavigate) and GHSA-337j-9hxr-rhxg (SSR
+#     hydration). Fixed 2026-10-11 by moving the dashboard to react-router-dom
+#     7.18.4; `npm audit --omit=dev` in dashboard-react reports 0.
+#   * npm-audit / grype: brace-expansion bundled inside aws-cdk-lib,
+#     GHSA-6j4f-fj2g-mc7p, GHSA-q2hr-2g5m-vwhr and GHSA-qhr7-859c-m2p7. Fixed
+#     2026-10-11 by aws-cdk-lib 2.273.0, which bundles brace-expansion 5.0.12;
+#     `npm audit --omit=dev` in deploy-cdk reports 0.
+#   * CKV_DOCKER_3 (container runs as root). All nine agentcore/*/Dockerfile
+#     images now declare `USER agentuser`. If ASH reports it again, a
+#     Dockerfile has regressed — that is a real finding, not stale config.
+#
+# Formerly on this list and now AUDITED, then suppressed inline rather than
+# here, so the exemption covers the six audited lines and nothing else:
+#   * B608 hardcoded_sql_expressions — Athena SQL assembled by f-string in the
+#     data-quality agent (agentcore/data_quality_agent/main.py), at six sites
+#     in check_row_count, check_null_rates, check_duplicates and
+#     check_freshness. Each function passes every table and column name it
+#     interpolates through validate_identifier() (shared/identifier_utils.py:
+#     a full match against ^[A-Za-z_][A-Za-z0-9_]*$, at most 255 characters)
+#     before building the string. The database name is sent as
+#     QueryExecutionContext and never interpolated, and the information_schema
+#     lookup binds its values through ExecutionParameters. The audit found no
+#     other SQL under agentcore/. The rejection of hostile identifiers is
+#     pinned by
+#     tests/unit/agents/data_quality_agent/test_athena_identifier_validation.py.
+#     Each site carries `# noqa: S608  # nosec B608` on the line the scanners
+#     report, so a new f-string SQL site anywhere still fails. `make security`
+#     now scans agentcore/ as well as lambda/, shared/ and mcp/.
+#
+# B701 jinja2_autoescape_false, at the PySpark template environment
+# (lambda/agentic_data_ingestion_create_code/code_assembly.py), the prompt
+# template loader (shared/prompt_template_loader.py) and the golden-script
+# helpers in scripts/, is a false positive by construction: those templates
+# render Python source and plain-text LLM prompts, never HTML, so HTML
+# autoescaping would corrupt their output. Accepted 2026-10-07 and suppressed
+# by line below, with an expiration. `make security` (bandit run directly, not
+# through ASH) still reports them, which is intended: that target reads no
+# ASH config.
+#
+# Re-run ASH after touching this file. Scanners lint their own config.
+
+global_settings:
+  severity_threshold: MEDIUM
+
+  suppressions:
+
+    # ---- detect-secrets -----------------------------------------------------
+
+    - rule_id: SECRET-AWS-ACCESS-KEY
+      path: "tests/contracts/api_responses/test_presign_contract.py"
+      reason: >-
+        AKIAIOSFODNN7EXAMPLE, the access key ID published in AWS's own
+        documentation as the canonical example value. Not a credential, and it
+        cannot authenticate. Used here because the presigned-POST contract test
+        needs a well-formed key ID in the policy it asserts on.
+
+    - rule_id: SECRET-AWS-ACCESS-KEY
+      path: "tests/unit/lambdas/dashboard_api/test_presign_upload.py"
+      reason: >-
+        Same AWS documentation example key ID as above, for the same reason —
+        the upload handler's presign response is asserted field by field.
+
+    # REMOVED (p68): a suppression for docs/archive/prompts/glue_code_analysis_prompt.md.
+    # That path no longer exists under this prefix — docs/archive/ was relocated to
+    # internal-docs/archive/, outside the publishable project, so the file it
+    # suppressed is no longer scanned. A suppression naming a path that cannot be
+    # reached reads as a live exemption and hides nothing, so it is deleted rather
+    # than repointed.
+
+    - rule_id: SECRET-BASIC-AUTH-CREDENTIALS
+      path: "dashboard-react/src/pages/wizard/__tests__/WizardStepReview.test.tsx"
+      reason: >-
+        Synthetic JDBC URLs ("user:secret@host", "admin:p%40ss@host") passed as
+        INPUT to maskJdbcUrl(). The test asserts the credentials are stripped
+        before display, so removing them would delete the coverage that proves
+        credentials are masked.
+
+    - rule_id: SECRET-TELEGRAM-BOT-TOKEN
+      path: "tests/fixtures/events/sqs_message_envelope.json"
+      reason: >-
+        False positive on an SQS `md5OfBody` field. The value is
+        d41d8cd98f00b204e9800998ecf8427e, the MD5 of the empty string, which is
+        a fixed public constant and structurally resembles a bot token.
+
+    - rule_id: CKV_SECRET_6
+      path: "tests/fixtures/events/sfn_task_token.json"
+      reason: >-
+        Synthetic AWS Step Functions task token, a short repeating pattern
+        rather than a captured value. Task tokens are single-execution and this
+        one refers to no execution that has ever existed.
+
+    - rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      path: "tests/fixtures/*"
+      reason: >-
+        Synthetic identifiers in offline test fixtures — run ids, pipeline ids,
+        execution ids, trace and span ids. High entropy is what makes them
+        realistic ids; none is a credential and none grants access to anything.
+
+    # REMOVED (2026-10-06): SECRET-BASE64-HIGH-ENTROPY-STRING on "tests/fixtures/*".
+    # The 2026-10-02 scan's unused-suppressions report showed it matched nothing:
+    # no base64-shaped finding exists under tests/fixtures/. A suppression that
+    # matches nothing hides nothing today and would silently hide a real one
+    # tomorrow, so it is deleted rather than kept "just in case".
+
+    - rule_id: SECRET-SECRET-KEYWORD
+      path: "tests/*"
+      reason: >-
+        Matches on the words "secret"/"token" in test code that exercises
+        Secrets Manager ARN handling and Step Functions task tokens. The
+        project's standing rule is that credentials are referenced by ARN and
+        never held in plaintext, so these are ARNs and identifiers, not values.
+
+    # ---- detect-secrets: triage of the 2026-10-02 scan ----------------------
+    #
+    # 52 detect-secrets findings were inspected one by one; all are false
+    # positives. One (skills-lock.json) was removed from the tree instead. The
+    # rest are suppressed below, by line wherever the finding is a single
+    # literal, so a new string elsewhere in the same file still fires. Two
+    # entries use a file glob because the finding is a pattern repeated across
+    # many files (character alphabets in property tests, and keyword matches
+    # in frontend tests mirroring the Python "tests/*" entry above). Line
+    # numbers are as of 2026-10-06; re-check the unused-suppressions report
+    # after editing any file named here.
+
+    - rule_id: SECRET-SECRET-KEYWORD
+      path: "dashboard-react/src/*__tests__/*"
+      reason: >-
+        The frontend twin of the "tests/*" entry above. Every match is a
+        synthetic Secrets Manager ARN (secret_arn: 'arn:aws:secretsmanager:...')
+        passed through wizard and hook tests, or the fixed string "hunter2" in
+        api-error.test.ts, which that test feeds in to prove error details are
+        redacted before display.
+
+    - rule_id: SECRET-SECRET-KEYWORD
+      path: "deploy-cdk/test/*"
+      reason: >-
+        CDK assertion tests. foundation-iam.test.ts names the Secrets Manager
+        ARN prefixes it expects a grant on, and hosting-auth, p47-cors-posture
+        and p56-spa-router-function pass the literal
+        'test-secret-value-for-cdk-assertions' as the origin-verify header
+        value of a stack synthesised only inside the test.
+
+    - rule_id: SECRET-BASE64-HIGH-ENTROPY-STRING
+      path: "dashboard-react/src/*__tests__/*.prop*.test.ts*"
+      reason: >-
+        fast-check property tests build identifiers from a literal alphabet
+        ('abcdefghijklmnopqrstuvwxyz0123456789_' and similar). A string
+        containing every letter is maximally "high entropy" and contains no
+        secret.
+
+    - rule_id: SECRET-BASE64-HIGH-ENTROPY-STRING
+      path: "dashboard-react/src/hooks/__tests__/use-executions.envelope.characterization.test.ts"
+      line_start: 202
+      line_end: 202
+      reason: >-
+        A base64-encoded pagination cursor captured from a development run. It
+        decodes to {"page":3,"pipeline_id":...,"run_id":...,"started_at":...}:
+        a page position and two run identifiers, no credential.
+
+    - rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      path: "dashboard-react/src/services/__tests__/api-error.test.ts"
+      line_start: 144
+      line_end: 144
+      reason: >-
+        'abc123def', a placeholder the test asserts is NOT present in the
+        rendered error, which is how it proves request ids are stripped.
+
+    - rule_id: SECRET-BASE64-HIGH-ENTROPY-STRING
+      path: "tests/contracts/api_responses/test_presign_contract.py"
+      line_start: 68
+      line_end: 68
+      reason: >-
+        wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY, the secret access key AWS
+        publishes in its documentation as the example paired with
+        AKIAIOSFODNN7EXAMPLE (suppressed above for the same file). It cannot
+        authenticate; the presigned-POST test needs a well-formed key pair.
+
+    - rule_id: SECRET-BASE64-HIGH-ENTROPY-STRING
+      path: "tests/unit/lambdas/dashboard_api/test_presign_upload.py"
+      line_start: 408
+      line_end: 408
+      reason: >-
+        The same AWS documentation example secret access key, for the same
+        reason.
+
+    - rule_id: SECRET-BASE64-HIGH-ENTROPY-STRING
+      path: "tests/unit/lambdas/pipeline_trigger/test_duplicate_content_skip.py"
+      line_start: 866
+      line_end: 866
+      reason: >-
+        A hypothesis st.text alphabet ("abcdefghijklmnopqrstuvwxyz0123456789-_"),
+        not a value.
+
+    - rule_id: SECRET-BASE64-HIGH-ENTROPY-STRING
+      path: "tests/unit/test_deploy_stack_verification_prop.py"
+      line_start: 66
+      line_end: 66
+      reason: >-
+        A hypothesis st.text alphabet ("ABCDEFGHIJKLMNOPQRSTUVWXYZ_"), not a
+        value.
+
+    - rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      path: "tests/unit/lambdas/pipeline_trigger/test_*.py"
+      reason: >-
+        d41d8cd98f00b204e9800998ecf8427e, the MD5 of the empty string, used as
+        the S3 ETag of a synthetic zero-byte object across the duplicate-gate,
+        skipped-run, gate-outcome and partial-batch tests. A fixed public
+        constant (the same one suppressed for sqs_message_envelope.json above).
+
+    - rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      path: "tests/unit/lambdas/file_validation/test_content_fingerprint_capture.py"
+      line_start: 32
+      line_end: 32
+      reason: The empty-string MD5 used as a synthetic S3 ETag, as above.
+
+    - rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      path: "tests/unit/lambdas/queue_loss_recorder/test_queue_loss_record.py"
+      line_start: 117
+      line_end: 117
+      reason: The empty-string MD5 used as a synthetic S3 ETag, as above.
+
+    - rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      path: "tests/unit/shared/test_processed_file_ledger.py"
+      line_start: 36
+      line_end: 36
+      reason: The empty-string MD5 used as a synthetic S3 ETag, as above.
+
+    - rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      path: "tests/unit/lambdas/create_code/test_mapping_source_schema_compatibility.py"
+      line_start: 104
+      line_end: 104
+      reason: >-
+        RUN_SCHEMA_HASH, a SHA-256 schema hash the test compares. A schema hash
+        identifies a column layout; it is not a secret and grants nothing.
+
+    - rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      path: "tests/unit/lambdas/create_code/test_mapping_source_schema_compatibility.py"
+      line_start: 119
+      line_end: 119
+      reason: OTHER_SCHEMA_HASH, the second SHA-256 schema hash in the same comparison.
+
+    - rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      path: "tests/unit/lambdas/create_code/test_mapping_source_schema_compatibility_prop.py"
+      line_start: 69
+      line_end: 71
+      reason: The same two SHA-256 schema hashes, in the property-test twin.
+
+    - rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      path: "tests/integration/pipeline_flow/test_artifacts_integration.py"
+      line_start: 81
+      line_end: 81
+      reason: >-
+        "abc123def456", a placeholder schema_hash.
+
+    - rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      path: "tests/unit/lambdas/dashboard_api/test_jdbc_resources.py"
+      line_start: 486
+      line_end: 486
+      reason: >-
+        "abc123def456", a placeholder discovery-crawler tag value.
+
+    - rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      path: "tests/unit/lambdas/dashboard_api/test_jdbc_resources.py"
+      line_start: 896
+      line_end: 896
+      reason: >-
+        "abc123def", a placeholder the test asserts is NOT present in the
+        handler's output.
+
+    - rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      path: "tests/unit/lambdas/dashboard_api/test_retry_run_identity_prop.py"
+      line_start: 386
+      line_end: 386
+      reason: >-
+        "0f1e2d3c4b5a6978", a placeholder schema_hash (descending hex digits).
+
+    - rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      path: "tests/unit/lambdas/dashboard_api/test_run_details_schema_version.py"
+      line_start: 117
+      line_end: 117
+      reason: >-
+        "a1b2c3d4e5f60718", a placeholder schema hash (alternating letters and
+        digits).
+
+    - rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      path: "tests/unit/lambdas/execution_updater/test_lineage_building.py"
+      line_start: 123
+      line_end: 123
+      reason: >-
+        "abc123def456", a placeholder schema_hash in a DynamoDB-shaped record.
+
+    - rule_id: SECRET-SECRET-KEYWORD
+      path: "deploy-cdk/lib/compute-stack.ts"
+      line_start: 1550
+      line_end: 1550
+      reason: >-
+        The secretName property naming the CloudFront origin-verify secret. A
+        name, not a value: Secrets Manager generates the value at deploy time
+        and it is never written in source.
+
+    - rule_id: SECRET-SECRET-KEYWORD
+      path: "deploy-cdk/lib/test-fixtures-stack.ts"
+      line_start: 227
+      line_end: 227
+      reason: >-
+        A secretName property naming the opt-in test-fixture source database's
+        secret. A name, not a value: the password is generated by Secrets
+        Manager when the opt-in stack deploys.
+
+    - rule_id: SECRET-SECRET-KEYWORD
+      path: "deploy-cdk/lib/test-fixtures-stack.ts"
+      line_start: 261
+      line_end: 261
+      reason: The same, for the opt-in test-fixture target database's secret.
+
+    - rule_id: SECRET-SECRET-KEYWORD
+      path: "docs/JDBC_SOURCE.md"
+      line_start: 688
+      line_end: 688
+      reason: >-
+        A documentation example of the source_config payload, whose secret_arn
+        uses the documentation account id 123456789012. It is an ARN, which is
+        the only way this project references a credential (LGR-819980f-1).
+
+    - rule_id: SECRET-SECRET-KEYWORD
+      path: "dashboard-react/src/utils/resource-empty-states.ts"
+      line_start: 31
+      line_end: 31
+      reason: >-
+        DATABASE_SECRET_WORDS, a UI copy string: the list of database-type words
+        the wizard's Secrets Manager dropdown filters secret NAMES by ("db,
+        database, rds, jdbc, ..."), shown in the empty-state sentence "This list
+        shows only secrets whose name contains ...". The keyword match is on the
+        identifier containing "SECRET"; the value is prose, not a credential.
+        First seen 2026-10-11 (the file landed 2026-10-09, after the last scan).
+
+    - rule_id: SECRET-BASE64-HIGH-ENTROPY-STRING
+      path: "lambda/agentic_data_ingestion_dashboard_api/handlers/GLUE_JOBS_API.md"
+      line_start: 565
+      line_end: 565
+      reason: >-
+        A documentation example next_token. It decodes to
+        {"lastEvaluatedKey":{"run_id":"jr_ghi789jkl012"}}, a pagination cursor.
+
+    # ---- bandit -------------------------------------------------------------
+
+    - rule_id: B101
+      path: "tests/*"
+      reason: >-
+        assert_used. These are pytest assertions, which is what a test is made
+        of. Accounts for the overwhelming majority of low-severity findings.
+
+    - rule_id: B102
+      path: "tests/*"
+      reason: >-
+        exec_used. Test-only: several suites AST-load a Lambda handler and exec
+        it to characterise behaviour without importing the deployment package.
+        Verified that no exec() call exists anywhere under lambda/, shared/,
+        mcp/ or agentcore/.
+
+    - rule_id: B307
+      path: "tests/*"
+      reason: >-
+        eval_used. Three occurrences, all test helpers that evaluate a
+        transcribed call-site expression to pin current behaviour. Verified
+        that production code contains zero eval() — a property the threat model
+        depends on and states explicitly.
+
+    # REMOVED (2026-10-06): B701 on "pyspark_templates/*". Bandit reports
+    # B701 where a jinja2.Environment is constructed, which is Python code
+    # (code_assembly.py, prompt_template_loader.py), never inside a .j2 file,
+    # so this entry matched nothing (2026-10-02 unused-suppressions report).
+    # It is deleted rather than repointed at code_assembly.py: the header
+    # records that the production B701 findings stay visible on purpose.
+
+    - rule_id: B701
+      path: "tests/*"
+      reason: >-
+        Same autoescape=False setting, in the tests that render those templates.
+        The test environment has to match the production one or it proves
+        nothing.
+
+    - rule_id: B104
+      path: "mcp/*"
+      reason: >-
+        hardcoded_bind_all_interfaces. The MCP servers bind 0.0.0.0:8080 because
+        they run as containers, where binding the loopback interface would make
+        the port unreachable from outside the container. Network exposure is
+        controlled by the task's security group and by AgentCore, not by the
+        bind address.
+
+    # ---- Accepted by the owner, 2026-10-07; expire 2027-01-07 --------------
+    #
+    # See the ACCEPTED note in the header for the reasoning. Exact rule ids
+    # and files, so a new advisory or a new site still fires. Line-scoped
+    # where the finding sits on one line. Paths are as ASH reports them.
+
+    - rule_id: GHSA-337m-mw94-2v6g-commons-configuration2
+      path: "deploy-cdk/glue-jars/s3-tables-catalog-for-iceberg-runtime-0.1.5.jar"
+      expiration: "2027-01-07"
+      reason: >-
+        Apache Commons class shaded into the S3 Tables catalog JAR; release 0.1.8 bundles the same version, and the JAR runs inside the Glue job on the pipeline's own data. Accepted 2026-10-07; see the header.
+
+    - rule_id: GHSA-4265-ccf5-phj5-commons-compress
+      path: "deploy-cdk/glue-jars/s3-tables-catalog-for-iceberg-runtime-0.1.5.jar"
+      expiration: "2027-01-07"
+      reason: >-
+        Apache Commons class shaded into the S3 Tables catalog JAR; release 0.1.8 bundles the same version, and the JAR runs inside the Glue job on the pipeline's own data. Accepted 2026-10-07; see the header.
+
+    - rule_id: GHSA-4g9r-vxhx-9pgx-commons-compress
+      path: "deploy-cdk/glue-jars/s3-tables-catalog-for-iceberg-runtime-0.1.5.jar"
+      expiration: "2027-01-07"
+      reason: >-
+        Apache Commons class shaded into the S3 Tables catalog JAR; release 0.1.8 bundles the same version, and the JAR runs inside the Glue job on the pipeline's own data. Accepted 2026-10-07; see the header.
+
+    - rule_id: GHSA-cgwf-w82q-5jrr-commons-compress
+      path: "deploy-cdk/glue-jars/s3-tables-catalog-for-iceberg-runtime-0.1.5.jar"
+      expiration: "2027-01-07"
+      reason: >-
+        Apache Commons class shaded into the S3 Tables catalog JAR; release 0.1.8 bundles the same version, and the JAR runs inside the Glue job on the pipeline's own data. Accepted 2026-10-07; see the header.
+
+    - rule_id: GHSA-j288-q9x7-2f5v-commons-lang3
+      path: "deploy-cdk/glue-jars/s3-tables-catalog-for-iceberg-runtime-0.1.5.jar"
+      expiration: "2027-01-07"
+      reason: >-
+        Apache Commons class shaded into the S3 Tables catalog JAR; release 0.1.8 bundles the same version, and the JAR runs inside the Glue job on the pipeline's own data. Accepted 2026-10-07; see the header.
+
+    - rule_id: package_managers.npm.npm-missing-minimum-release-age.npm-missing-minimum-release-age
+      path: "dashboard-react/.npmrc"
+      expiration: "2027-01-07"
+      reason: >-
+        min-release-age needs npm 11.10 or later; the toolchain is npm 10, which warns on the unknown key on every command. Accepted 2026-10-07; see the header.
+
+    - rule_id: package_managers.npm.npm-missing-minimum-release-age.npm-missing-minimum-release-age
+      path: "deploy-cdk/.npmrc"
+      expiration: "2027-01-07"
+      reason: >-
+        min-release-age needs npm 11.10 or later; the toolchain is npm 10, which warns on the unknown key on every command. Accepted 2026-10-07; see the header.
+
+    - rule_id: B701
+      path: "lambda/agentic_data_ingestion_create_code/code_assembly.py"
+      # The line of `return jinja2.Environment(`, which is what the matcher
+      # compares against; the summary report's "373-379" is the context region
+      # and 373 (the docstring) did not match on 2026-10-11.
+      line_start: 374
+      line_end: 374
+      expiration: "2027-01-07"
+      reason: >-
+        Jinja2 environment rendering PySpark source, never HTML; HTML autoescaping would corrupt the output. Accepted 2026-10-07; see the B701 note in the header.
+
+    - rule_id: B701
+      path: "shared/prompt_template_loader.py"
+      line_start: 58
+      line_end: 58
+      expiration: "2027-01-07"
+      reason: >-
+        Jinja2 environment rendering plain-text LLM prompts, never HTML; HTML autoescaping would corrupt the output. Accepted 2026-10-07; see the B701 note in the header.
+
+    - rule_id: B701
+      path: "scripts/_regen_golden_snapshots.py"
+      line_start: 169
+      line_end: 169
+      expiration: "2027-01-07"
+      reason: >-
+        Jinja2 environment rendering PySpark golden scripts, never HTML; HTML autoescaping would corrupt the output. Accepted 2026-10-07; see the B701 note in the header.
+
+    - rule_id: B701
+      path: "scripts/_render_jdbc_golden_snapshots.py"
+      line_start: 124
+      line_end: 124
+      expiration: "2027-01-07"
+      reason: >-
+        Jinja2 environment rendering PySpark golden scripts, never HTML; HTML autoescaping would corrupt the output. Accepted 2026-10-07; see the B701 note in the header.
+
+    - rule_id: B701
+      path: "scripts/_render_jdbc_template_check.py"
+      line_start: 20
+      line_end: 20
+      expiration: "2027-01-07"
+      reason: >-
+        Jinja2 environment rendering PySpark source for a template check, never HTML; HTML autoescaping would corrupt the output. Accepted 2026-10-07; see the B701 note in the header.

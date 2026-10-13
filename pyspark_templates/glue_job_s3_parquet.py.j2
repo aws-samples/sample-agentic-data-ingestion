@@ -1,0 +1,204 @@
+{#- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    SPDX-License-Identifier: MIT-0 -#}
+{#- pyspark_templates/glue_job_s3_parquet.py.j2 — S3 Parquet/CSV target -#}
+{%- set write_mode = write_mode | default('overwrite') %}
+{%- set merge_key = merge_key | default('id') %}
+{%- set checkpoint_enabled = checkpoint_enabled | default(false) %}
+{%- set checkpoint_bucket = checkpoint_bucket | default('') %}
+import sys
+import logging
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.job import Job
+from pyspark.sql.functions import col, lit, trim, lower, to_date, to_timestamp, when, concat_ws, count as spark_count, regexp_replace, upper, initcap, substring, coalesce, length, split, array_contains, expr
+from pyspark.sql.types import StringType, IntegerType, LongType, DoubleType, BooleanType, DateType, TimestampType
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+# Initialize Glue context
+args = getResolvedOptions(sys.argv, [
+    'JOB_NAME', 'source_path', 'output_path',
+])
+sc = SparkContext()
+glue_context = GlueContext(sc)
+spark = glue_context.spark_session
+job = Job(glue_context)
+job.init(args['JOB_NAME'], args)
+{# p37 R1.1/R1.11: the runtime-arg resolution is included UNCONDITIONALLY.
+   run_pipeline already puts --pipeline_id, --run_id, --execution_timestamp and
+   --state_table into every start_job_run
+   (run_pipeline/lambda_function.py:134-139, :176) — only the resolution was
+   ever gated. The partial's own sys.argv-presence gate is what keeps manual
+   "start job" runs (which pass no Arguments) working, and
+   glue_job_jdbc_source.py.j2 has always included it unconditionally. #}
+
+{% include "_partials/_runtime_args.py.j2" %}
+{# Comment-as-spacer, deliberate: this line and the guard comment above each
+   render one newline, so the rendered script is byte-identical for runs that
+   already resolved runtime args. Do not collapse. #}
+
+try:
+    # Validate paths
+    source_path = args['source_path']
+    output_path = args['output_path']
+    if not source_path.startswith('s3://'):
+        raise ValueError(f"Invalid source_path: {source_path} (must start with s3://)")
+    if not output_path.startswith('s3://'):
+        raise ValueError(f"Invalid output_path: {output_path} (must start with s3://)")
+
+    # Read source data
+    logger.info(f"Reading source data from {source_path}")
+{% if source_format == 'csv' %}
+    df = spark.read.option("header", True).option("inferSchema", False).option("sep", {{ source_delimiter | tojson }}).csv(source_path)
+{% elif source_format == 'parquet' %}
+    df = spark.read.parquet(source_path)
+{% elif source_format == 'avro' %}
+    df = spark.read.format("avro").load(source_path)
+{% elif source_format == 'orc' %}
+    df = spark.read.orc(source_path)
+{% else %}
+    df = spark.read.option("multiLine", True).json(source_path)
+{% endif %}
+{#- p55 R11.1/R11.2 (design W4-D1) — the Rename_Manifest projection. It sits
+    HERE: immediately after the read, and before the transform, the DQDL rules
+    and the write. That ordering is the whole requirement — the source is read by
+    the ORIGINAL column name (R11.1) and everything downstream sees only approved
+    names (R11.2/R11.3). See `glue_job_s3_tables.py.j2`'s copy of this comment
+    for the full rationale, `json.dumps` emission (do-NOT 17), the
+    `validate_identifier` call on every target (do-NOT 2), and why the guard is
+    `is defined and` under StrictUndefined. -#}
+{%- if column_rename_block is defined and column_rename_block %}
+    {{ column_rename_block | indent(4, first=False) }}
+{%- endif %}
+
+    source_count = df.count()
+    logger.info(f"Source record count: {source_count}")
+    if source_count == 0:
+        logger.warning("Source data is empty — skipping transformation and write")
+{# p37 R1.3: position (i) — record the counts BEFORE the early exit. Without
+   this site `empty_source` is unrecordable: the job is gone before
+   transformed_count exists. `{% with %}` (not `{% set %}`) so an include
+   added later without a stage fails the render under StrictUndefined rather
+   than inheriting a leaked one. -#}
+{% with load_counts_stage = 'empty_source' -%}
+{% include "_partials/_load_counts.py.j2" %}
+{%- endwith %}
+        job.commit()
+        sys.exit(0)
+
+    # === AI-Generated Transform Block ===
+{% if checkpoint_enabled %}
+    from pyspark.sql.utils import AnalysisException as _AnalysisException
+    # P28 R19.9: per-run checkpoint location (run_id via getResolvedOptions —
+    # see _runtime_args above). JOB_NAME is kept in the path so runs group per
+    # job inside the shared checkpoint bucket; the checkpoints/ prefix keeps
+    # new scripts from ever resuming a legacy shared-'default' checkpoint.
+    checkpoint_path = f"s3://{{ checkpoint_bucket }}/checkpoints/{args['JOB_NAME']}/{_adi_effective_run_id}/"
+    try:
+        df_transformed = spark.read.parquet(checkpoint_path)
+        logger.info(f"Resumed from checkpoint: {checkpoint_path}")
+    except _AnalysisException:
+        {{ transform_block | indent(8, first=False) }}
+        df_transformed.write.mode("overwrite").parquet(checkpoint_path)
+        logger.info(f"Checkpoint saved to: {checkpoint_path}")
+{% else %}
+    {{ transform_block | indent(4, first=False) }}
+{% endif %}
+    # === End Transform Block ===
+{#- p64 R7.1/R7.2 (design C7) — the dedup drop, via the shared partial. ONE
+    include site, placed after the transform and BEFORE the DQ 'evaluate' site
+    below, so duplicate rows are not quarantined as `Uniqueness` failures before
+    dedup sees them (R7.6). See `glue_job_s3_tables.py.j2`'s copy of this comment
+    and the partial's own header for the full ordering argument.
+
+    THIS TEMPLATE HAS NO COLUMN-SELECT BLOCK, so a bare `dropDuplicates()` keys on
+    whatever columns the transform produced — still exactly the frame being
+    written, and so still what an operator who left the column list empty asked
+    for. The partial's header states that limit rather than claiming "all mapped
+    target columns" of all five templates. -#}
+{%- include "_partials/_dedup.py.j2" %}
+
+{# p64 R6.1/R6.2 (design C6) — inline Glue Data Quality, via the shared
+   partial rather than a fourth copy of it. TWO include sites, and the order is
+   load-bearing: 'evaluate' must follow the transform (it evaluates the rules
+   against the frame that will actually be written, and rebinds df_transformed
+   to the Passed rows), and 'report' must follow `transformed_count` because
+   the counter it publishes as `rows_passed` IS `transformed_count`. See the
+   partial's header for the fence on the quarantine write and for why its
+   indentation is literal.
+
+   KNOWN RESIDUAL, RECORDED RATHER THAN SILENTLY CARRIED (p64 2b.2). The
+   quarantine write needs `s3:PutObject` on the quarantine bucket
+   (adi-generated-code-*), and the per-pipeline Glue execution role does not
+   grant it for this target type: `create_glue_pipeline/iam_roles.py:422` (the
+   `elif target_type in ["S3_PARQUET", "S3", "S3_BUCKET"]` branch) grants
+   `adi-generated-code-*/*` with `s3:GetObject` ONLY, at :439-441. The
+   S3_TABLES/GLUE_CATALOG branch does grant Put/Delete, at :223-226 — which is
+   why this was invisible while the DQ block lived in glue_job_s3_tables.py.j2
+   alone. Consequence: an S3-Parquet-target pipeline with a non-empty ruleset
+   AND failing rows fails at the quarantine write with AccessDenied. That is
+   fail-closed rather than row-losing (the write is deliberately outside the
+   non-blocking try, R6.3), so it is safe but wrong. JDBC has the identical gap
+   at :375-377.
+
+   STATUS AFTER 2c.1: CLOSED. The residual above is historical, kept for the
+   reason it names rather than as an open item. 2b.4 first made it UNREACHABLE by
+   gating this block on `data_quality_enabled`, which defaults to OFF for this
+   target type, and withheld the grant deliberately (`LGR-9e76249-3`,
+   `LGR-b46a5bb-2` — do not widen a runtime role for a path that cannot execute).
+   2c.1 made the opt-in settable at the API and added the grant in the same change:
+   a dedicated `s3:PutObject` on `adi-generated-code-*/*` statement in the
+   `elif target_type in ["S3_PARQUET", "S3", "S3_BUCKET"]` branch, and in the JDBC
+   branch. See glue_job_jdbc.py.j2's copy of this note for why it is a separate
+   statement and must not be merged into the existing GetObject grant. -#}
+{% with data_quality_stage = 'evaluate' -%}
+{% include "_partials/_data_quality.py.j2" %}
+{%- endwith %}
+{#- p64 R8.1/R8.2 (task 2d.2) — the non-printable character check, via the shared
+    partial. ONE include site, and it sits HERE deliberately: AFTER the DQ
+    'evaluate' site above, because that stage rebinds df_transformed to the Passed
+    split, so counting earlier would count rows that are about to be quarantined
+    and never written; and BEFORE `transformed_count` below, because the local it
+    leaves behind (`_adi_np_rows`) is read by the DQ 'report' stage further down.
+    The check FLAGS — it diverts no rows and adds nothing to rows_quarantined — and
+    its disabled arm costs zero rendered bytes. The partial's header carries the
+    full argument, the character class, and the pairing rule between its guard and
+    the report stage's. -#}
+{%- include "_partials/_nonprintable_check.py.j2" %}
+
+    transformed_count = df_transformed.count()
+    logger.info(f"Transformed record count: {transformed_count} (filtered {source_count - transformed_count} records)")
+{% with data_quality_stage = 'report' -%}
+{% include "_partials/_data_quality.py.j2" %}
+{%- endwith %}
+    # Write to S3 as Parquet
+    logger.info(f"Writing to S3 path: {output_path}")
+{% if write_mode == 'append' %}
+{% if partition_columns %}
+    df_transformed.write.mode("append").partitionBy({{ partition_columns }}).parquet(output_path)
+{% else %}
+    df_transformed.write.mode("append").parquet(output_path)
+{% endif %}
+{% else %}
+{% if partition_columns %}
+    df_transformed.write.mode("overwrite").partitionBy({{ partition_columns }}).parquet(output_path)
+{% else %}
+    df_transformed.write.mode("overwrite").parquet(output_path)
+{% endif %}
+{% endif %}
+
+    logger.info(f"Write to S3 Parquet complete ({transformed_count} records)")
+{# p37 R1.1: position (ii) — AFTER the write block, so write_confirmed=True
+   means the write returned without raising (risk N1). -#}
+{% with load_counts_stage = 'post_write' -%}
+{% include "_partials/_load_counts.py.j2" %}
+{%- endwith %}
+
+except Exception as e:
+    logger.error(f"ETL job failed: {str(e)}")
+    raise
+finally:
+    job.commit()

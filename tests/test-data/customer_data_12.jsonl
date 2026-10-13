@@ -1,0 +1,5 @@
+{"subscriber_id": "SUB-12001", "first_name": "Aria", "last_name": "Thompson", "contact_email": "aria.t@email.com", "phone_number": "+1-555-1201", "start_date": "2024-11-01", "plan": "enterprise", "seats": 25}
+{"subscriber_id": "SUB-12002", "first_name": "Kai", "last_name": "Ueda", "contact_email": "kai.u@email.com", "phone_number": "+81-555-1202", "start_date": "2024-11-02", "plan": "team", "seats": 10}
+{"subscriber_id": "SUB-12003", "first_name": "Iris", "last_name": "Volkov", "contact_email": "iris.v@email.com", "phone_number": "+7-555-1203", "start_date": "2024-11-03", "plan": "individual", "seats": 1}
+{"subscriber_id": "SUB-12004", "first_name": "Omar", "last_name": "Walsh", "contact_email": "omar.w@email.com", "phone_number": "+44-555-1204", "start_date": "2024-11-04", "plan": "enterprise", "seats": 50}
+{"subscriber_id": "SUB-12005", "first_name": "Luna", "last_name": "Xu", "contact_email": "luna.x@email.com", "phone_number": "+86-555-1205", "start_date": "2024-11-05", "plan": "team", "seats": 5}

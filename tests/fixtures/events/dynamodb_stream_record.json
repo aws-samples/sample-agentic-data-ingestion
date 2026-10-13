@@ -1,0 +1,64 @@
+{
+  "Records": [
+    {
+      "eventID": "1a2b3c4d5e6f7a8b9c0d1e2f",
+      "eventName": "MODIFY",
+      "eventVersion": "1.1",
+      "eventSource": "aws:dynamodb",
+      "awsRegion": "us-east-1",
+      "dynamodb": {
+        "ApproximateCreationDateTime": 1705312920,
+        "Keys": {
+          "pipeline_key": {"S": "pipeline-abc123"},
+          "run_id": {"S": "exec-run-001"}
+        },
+        "NewImage": {
+          "pipeline_key": {"S": "pipeline-abc123"},
+          "run_id": {"S": "exec-run-001"},
+          "status": {"S": "succeeded"},
+          "started_at": {"S": "2024-01-15T10:35:00Z"},
+          "completed_at": {"S": "2024-01-15T10:42:00Z"},
+          "current_step": {"S": "job_completion"},
+          "schema_version": {"N": "1"},
+          "steps_status": {
+            "M": {
+              "file_validation": {"S": "succeeded"},
+              "schema_extraction": {"S": "succeeded"},
+              "schema_comparison": {"S": "succeeded"},
+              "schema_mapping": {"S": "succeeded"},
+              "code_generation": {"S": "succeeded"},
+              "code_testing": {"S": "succeeded"},
+              "infrastructure_creation": {"S": "succeeded"},
+              "pipeline_execution": {"S": "succeeded"},
+              "job_completion": {"S": "succeeded"}
+            }
+          }
+        },
+        "OldImage": {
+          "pipeline_key": {"S": "pipeline-abc123"},
+          "run_id": {"S": "exec-run-001"},
+          "status": {"S": "running"},
+          "started_at": {"S": "2024-01-15T10:35:00Z"},
+          "current_step": {"S": "pipeline_execution"},
+          "schema_version": {"N": "1"},
+          "steps_status": {
+            "M": {
+              "file_validation": {"S": "succeeded"},
+              "schema_extraction": {"S": "succeeded"},
+              "schema_comparison": {"S": "succeeded"},
+              "schema_mapping": {"S": "succeeded"},
+              "code_generation": {"S": "succeeded"},
+              "code_testing": {"S": "succeeded"},
+              "infrastructure_creation": {"S": "succeeded"},
+              "pipeline_execution": {"S": "running"}
+            }
+          }
+        },
+        "SequenceNumber": "111",
+        "SizeBytes": 512,
+        "StreamViewType": "NEW_AND_OLD_IMAGES"
+      },
+      "eventSourceARN": "arn:aws:dynamodb:us-east-1:123456789012:table/agentic_data_ingestion_state/stream/2024-01-15T00:00:00.000"
+    }
+  ]
+}

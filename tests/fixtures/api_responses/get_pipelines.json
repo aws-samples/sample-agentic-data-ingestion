@@ -1,0 +1,54 @@
+{
+  "pipelines": [
+    {
+      "pipeline_key": "pipeline-abc123",
+      "pipeline_name": "Customer Data Ingestion",
+      "status": "active",
+      "source_schema": "{\"fields\": [{\"field_name\": \"id\", \"field_type\": \"integer\"}]}",
+      "target_schema": "{\"fields\": [{\"field_name\": \"id\", \"field_type\": \"integer\"}]}",
+      "created_at": "2024-01-15T10:30:00Z",
+      "updated_at": "2024-01-20T14:00:00Z",
+      "model_id": "anthropic.claude-3-sonnet",
+      "target_type": "s3_tables",
+      "schema_version": 2,
+      "mapping_count": 5,
+      "has_mapping": true,
+      "file_count": 3,
+      "target_config": {
+        "type": "NEW_S3_TABLE_BUCKET",
+        "bucket_name": "agentic-data-ingestion-target-bucket",
+        "table_name": "customers",
+        "write_mode": "append"
+      },
+      "approval_config": {
+        "schema_mapping_enabled": true,
+        "code_generation_enabled": true
+      }
+    },
+    {
+      "pipeline_key": "pipeline-def456",
+      "pipeline_name": "Order Events Pipeline",
+      "status": "created",
+      "source_schema": "",
+      "target_schema": "",
+      "created_at": "2024-01-18T09:00:00Z",
+      "updated_at": "2024-01-18T09:00:00Z",
+      "target_type": "glue_catalog",
+      "schema_version": 0,
+      "mapping_count": 0,
+      "has_mapping": false,
+      "file_count": 0,
+      "target_config": {
+        "type": "GLUE_CATALOG",
+        "database": "analytics_db",
+        "table": "orders",
+        "write_mode": "overwrite"
+      }
+    }
+  ],
+  "total_count": 2,
+  "page": 1,
+  "page_size": 20,
+  "total_pages": 1,
+  "has_more": false
+}

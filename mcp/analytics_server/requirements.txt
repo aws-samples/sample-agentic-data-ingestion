@@ -1,0 +1,40 @@
+# Agentic Data Ingestion Analytics MCP Server Requirements
+# Compatible with Amazon Bedrock AgentCore Runtime
+#
+# Every entry is an exact pin. Names shared with agentcore/*/requirements.txt
+# and uv.lock use those versions; the OpenTelemetry trio matches the exact pins
+# aws-opentelemetry-distro 0.18.0 declares. Enforced by
+# tests/unit/agentcore/test_container_dependencies_pinned.py.
+
+# MCP Framework - FastMCP required for AgentCore compatibility
+fastmcp==3.4.8
+mcp==1.28.1
+
+# AWS SDK
+boto3==1.43.33
+botocore==1.43.33
+
+# Logging
+loguru==0.7.3
+
+# Data validation
+pydantic==2.13.4
+
+# HTTP client for health checks and SigV4
+requests==2.34.2
+httpx==0.28.1
+
+# Date/time handling
+python-dateutil==2.9.0.post0
+
+# Async support
+anyio==4.15.1
+
+# Type hints support
+typing-extensions==4.16.0
+
+# OpenTelemetry — AgentCore Observability
+aws-opentelemetry-distro==0.18.0
+opentelemetry-api==1.42.1
+opentelemetry-sdk==1.42.1
+opentelemetry-exporter-otlp-proto-http==1.42.1

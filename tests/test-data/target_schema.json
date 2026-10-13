@@ -1,0 +1,67 @@
+{
+  "schema_name": "customer_data_target",
+  "version": "1.0",
+  "description": "Target schema for customer data standardization",
+  "fields": [
+    {
+      "name": "customer_id",
+      "type": "integer",
+      "required": true,
+      "description": "Unique customer identifier"
+    },
+    {
+      "name": "first_name",
+      "type": "string",
+      "required": true,
+      "max_length": 50,
+      "description": "Customer first name"
+    },
+    {
+      "name": "last_name",
+      "type": "string",
+      "required": true,
+      "max_length": 50,
+      "description": "Customer last name"
+    },
+    {
+      "name": "email",
+      "type": "string",
+      "required": true,
+      "format": "email",
+      "description": "Customer email address"
+    },
+    {
+      "name": "phone",
+      "type": "string",
+      "required": false,
+      "pattern": "^\\d{3}-\\d{4}$",
+      "description": "Customer phone number"
+    },
+    {
+      "name": "registration_date",
+      "type": "date",
+      "required": true,
+      "format": "YYYY-MM-DD",
+      "description": "Customer registration date"
+    },
+    {
+      "name": "status",
+      "type": "string",
+      "required": true,
+      "enum": ["active", "inactive", "pending"],
+      "description": "Customer account status"
+    }
+  ],
+  "constraints": {
+    "primary_key": ["customer_id"],
+    "unique_fields": ["email"],
+    "not_null_fields": ["customer_id", "first_name", "last_name", "email", "registration_date", "status"]
+  },
+  "metadata": {
+    "created_by": "AgenticDataIngestion Pipeline",
+    "created_date": "2024-09-25",
+    "last_updated": "2024-09-25",
+    "data_classification": "internal",
+    "retention_period": "7_years"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "pipeline_key": "pipeline-abc123",
+  "pipeline_name": "Customer Data Ingestion",
+  "status": "active",
+  "source_schema": "{\"fields\": [{\"field_name\": \"id\", \"field_type\": \"integer\"}]}",
+  "target_schema": "{\"fields\": [{\"field_name\": \"id\", \"field_type\": \"integer\"}]}",
+  "created_at": "2024-01-15T10:30:00Z",
+  "updated_at": "2024-01-21T08:00:00Z",
+  "target_type": "s3_tables",
+  "schema_version": 2,
+  "mapping_count": 5,
+  "has_mapping": true,
+  "file_count": 3,
+  "target_config": {
+    "type": "NEW_S3_TABLE_BUCKET",
+    "bucket_name": "agentic-data-ingestion-target-bucket",
+    "table_name": "customers",
+    "write_mode": "merge",
+    "merge_key": "id"
+  },
+  "approval_config": {
+    "schema_mapping_enabled": true,
+    "code_generation_enabled": false
+  }
+}

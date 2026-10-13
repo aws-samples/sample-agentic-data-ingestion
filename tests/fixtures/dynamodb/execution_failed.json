@@ -1,0 +1,20 @@
+{
+  "run_id": "exec-run-002",
+  "pipeline_key": "pipeline-abc123",
+  "status": "failed",
+  "started_at": "2024-01-16T09:00:00Z",
+  "completed_at": "2024-01-16T09:05:30Z",
+  "steps_status": {
+    "file_validation": "succeeded",
+    "schema_extraction": "succeeded",
+    "schema_comparison": "succeeded",
+    "schema_mapping": "succeeded",
+    "code_generation": "succeeded",
+    "code_testing": "failed"
+  },
+  "current_step": "code_testing",
+  "schema_version": 1,
+  "file_key": "uploads/customer_data_v2.csv",
+  "source_format": "csv",
+  "error_message": "PySpark test execution failed: AnalysisException — column 'customer_id' not found in source schema"
+}

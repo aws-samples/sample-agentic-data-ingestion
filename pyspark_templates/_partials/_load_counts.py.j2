@@ -1,0 +1,273 @@
+{#- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    SPDX-License-Identifier: MIT-0 -#}
+{#- _partials/_load_counts.py.j2 — persist Rows_Read / Rows_Written (p37 R1.1, R1.11, R1.13).
+
+    Writes ONE state row per include site:
+
+        (run_id, "load_metrics") = {
+            run_id, step_name, pipeline_id, original_pipeline_id,
+            rows_read: int, rows_written: int, write_confirmed: bool,
+            source: "glue_job", timestamp: iso8601,
+            rows_deduplicated: int,   # only when dedup is on — see below
+        }
+
+    Ints, strings and bools only — no floats, no nested maps. That is
+    LGR-9d1c0e4-1's lesson (a bare `except` swallowed a Decimal
+    serialisation error and silently dropped a metric every run) applied at
+    the producer instead of at the serialiser. `int(...)` and `bool(...)`
+    are explicit at every value site so no Spark/py4j numeric can arrive as
+    a float.
+
+    WRITE SHAPE IS PutItem, AND THE DECIDING FACT IS IAM. The per-pipeline
+    Glue execution role grants `dynamodb:PutItem` ONLY on
+    agentic_data_ingestion_state (create_glue_pipeline/iam_roles.py:148-157,
+    the grant LGR-7c18e81-1 added). `update_item` on the Run_Pipeline_Row
+    would be AccessDenied; `put_item` on it would clobber job_completion's
+    terminal status write. A NEW row is the only option — and no IAM change
+    means no Foundation deploy.
+
+    BEST-EFFORT (R1.13). Wrapped in `except Exception -> logger.warning`,
+    matching the DQ state write at glue_job_s3_tables.py.j2's
+    "Failed to write DQ results to DynamoDB" arm. A telemetry failure must
+    not fail a job that has already written to the target. This is also
+    exactly why Load_Outcome's `not_established` is a reachable STEADY STATE
+    (p37 risk 3), not a migration artefact.
+
+    BEST-EFFORT IS A TIME BUDGET, NOT ONLY AN EXCEPTION HANDLER, AND THE CLIENT
+    IS EXPLICITLY BOUNDED FOR THAT REASON. The `except` above makes a failure
+    non-fatal; it does nothing about how LONG the failure takes, and this write
+    runs in a Glue job that may sit in a VPC with no route to DynamoDB. That is
+    not hypothetical: run-2026-09-23-15-22-35-f826bece did all of its real work
+    in ~60 s, then spent ELEVEN MINUTES here before the `except` fired, because
+    the default client retried a connect that could never succeed. The job's own
+    last words were "Connect timeout on endpoint URL:
+    https://dynamodb.us-west-2.amazonaws.com/". Its VPC had interface endpoints
+    for Secrets Manager and a gateway endpoint for S3 — which is why the source
+    read worked — and neither a DynamoDB endpoint nor a NAT gateway. The main
+    route table's `0.0.0.0/0 -> igw-...` looks like egress and is not: a Glue ENI
+    has no public IP, so an internet gateway route is a blackhole for it.
+
+    Two costs, and the second is the one that matters. The visible cost is ~11
+    minutes of billable DPU per run. The latent one is that Glue kills a job at
+    its Timeout (30 min by default here), so a pipeline whose real work takes
+    over ~18 minutes would be killed INSIDE this block — reporting a FAILED run
+    whose data had already landed in the target. A telemetry write must never be
+    able to do that.
+
+    Hence `connect_timeout=3, read_timeout=5, retries={"max_attempts": 0}` on a
+    client used for exactly one PutItem of a tiny row. The numbers:
+
+      * `connect_timeout=3` is what actually bounds the blackhole case — an
+        unroutable endpoint fails at connect, never at read. In-region DynamoDB
+        connects in single-digit milliseconds, so 3 s is three orders of
+        magnitude of headroom for a healthy call.
+      * `read_timeout=5` covers the PutItem itself, which is one small item with
+        no conditions and no index writes.
+      * `max_attempts: 0` is ONE total attempt: botocore reads this key as the
+        number of RETRIES and adds one for the initial request
+        (`botocore/args.py`, `_compute_retry_max_attempts`), the same trap
+        `LGR-b397ee2-4` documents for the Bedrock client. Zero retries is the
+        choice this partial's own contract implies — `not_established` is already
+        a declared steady state, so a metric lost to a transient blip is within
+        the contract, whereas doubling the worst-case delay is not. Left unset,
+        the call inherits `_retry.json`'s default of 5 attempts, and DynamoDB's
+        own entry raises it further; that inheritance is what produced the 11
+        minutes.
+
+    Worst case is now ~3 s instead of unbounded. Note this does NOT make
+    DynamoDB reachable from such a VPC — telemetry there still records nothing,
+    and `Load_Outcome` still reads `not_established`. Reachability is a
+    deployment concern (a DynamoDB gateway endpoint, or a NAT), documented in
+    docs/JDBC_SOURCE.md; this block's job is to stop being slow about it.
+
+    NO NEW `.count()` IN THIS PARTIAL. Reuses the `source_count` /
+    `transformed_count` locals every template already computes. R1.1 is a
+    persistence change, not a computation change, and that still holds here.
+    p64 2c.4 does add two counts to the pipeline, but they are emitted by
+    `_partials/_dedup.py.j2` inside its own enabled arm and this partial only
+    READS the local they leave behind — so a pipeline with dedup off pays for no
+    count this partial caused, which is the property the original wording was
+    protecting.
+
+    `rows_deduplicated` (p64 R7.6, task 2c.4) IS OMITTED ENTIRELY WHEN DEDUP IS
+    OFF, rather than written as a zero. Three reasons, and the first is the one
+    that decided it:
+
+      * A zero would change the rendered output of EVERY pipeline, including the
+        ones that never opted in. That breaks `tests/fixtures/golden_scripts/`
+        (ten stored scripts carry this block) and gives up the no-rendered-bytes
+        standard 2c.3 holds itself to. Omission keeps both, and keeps this change
+        invisible to a dedup-off render.
+      * Readers must already tolerate the key's absence: every row written before
+        2c.4 lacks it. So absence is a case the consumer needs regardless, and
+        emitting a zero would not remove it — only hide it until the first old
+        row is read.
+      * A written zero and an absent key are different claims. Zero means "dedup
+        ran and removed nothing"; absent means "dedup did not run". Folding the
+        two would be a smaller version of exactly the misattribution R7.6 is
+        about.
+
+    THE `empty_source` STAGE EMITS THE LITERAL `0`, NOT A READ OF THE LOCAL. That
+    site sits inside the early exit, ABOVE the dedup block, so
+    `_adi_dedup_dropped` does not exist there — reading it would be a NameError in
+    a `try` that swallows it, silently dropping the whole metrics row. Zero rows
+    were read, so zero were deduplicated, and the literal states that without
+    depending on a local. It is a stage-conditional literal for the same reason
+    `rows_written` and `write_confirmed` are: this partial has no defaults, and a
+    stage decides the value rather than an optional variable read supplying one.
+
+    THE GUARD IS THE SAME `is mapping and … is true` SHAPE `_dedup.py.j2` USES,
+    deliberately, and copied rather than reinvented. `quality_config` is set
+    unconditionally in `code_assembly.generate_code`'s `template_vars`, but the
+    render sites in the test suite omit it, and `is mapping` is an `isinstance`
+    check that consults no sentinel — so it answers False for an unset variable,
+    a `None`, a scalar, or a foreign `missing` from a second jinja2 copy in
+    `sys.modules`, without raising and without the identity question that broke 18
+    tests once. It fails CLOSED in every one of those cases, which for this field
+    means the key is omitted rather than a garbage value written. The two partials
+    must agree on when dedup ran, so they ask the question the same way.
+
+    NO `df.cache()` / `df.unpersist()`. LGR-0450623-1 records a reviewer's
+    `cache()` addition to glue_job_jdbc_source.py.j2's full-table path being
+    REVERTED because tests/unit/templates/test_glue_job_jdbc_source.py
+    documents and asserts that full-table mode emits neither.
+
+    `pipeline_id` IS CARRIED, DELIBERATELY. Omitting it would make
+    execution_updater._process_record drop the row for want of a pipeline —
+    a free dodge resting on an omission rather than on a rule. The rule is
+    the Step_Row allowlist in execution_updater (p37 C6), which routes this
+    row away from the step machinery before any status is derived, so it
+    grows no phantom step. Carrying it also keeps the row queryable through
+    the PipelineIndex GSI like every other state row.
+
+    REQUIRED CALLER VARIABLE: `load_counts_stage`, one of
+
+      'empty_source' — inside the empty-source early-exit branch, before the
+                       exit. rows_written = 0, write_confirmed = False.
+                       Without this site R1.3's `empty_source` is
+                       UNRECORDABLE: the job is gone before
+                       transformed_count exists.
+      'post_write'   — after the target write block completed without
+                       raising. rows_written = transformed_count,
+                       write_confirmed = True.
+      'pre_write'    — after transformed_count is computed but BEFORE the
+                       write block, for a template whose structure does not
+                       allow the post-write position.
+                       rows_written = transformed_count,
+                       write_confirmed = False.
+
+    The stage is STATED by the caller, never guessed, because
+    `transformed_count` is rows handed to the writer, not rows confirmed
+    written (p37 risk N1) — and `write_confirmed` is the only place that
+    distinction survives into the data. There is deliberately no default:
+    with StrictUndefined an omitted stage fails the render loudly rather
+    than stamping a `write_confirmed` nobody chose.
+
+    INDENT IS DERIVED FROM THE STAGE, INLINE, AND THERE IS NO OVERRIDE HOOK.
+    8 for 'empty_source' (inside `try:` + `if source_count == 0:`) and 4
+    otherwise (module body inside `try:`) — the nesting every one of the five
+    templates actually has. It is computed IN the `indent()` argument rather
+    than via `{% set %}` from an optional `load_counts_indent | default(...)`,
+    and that is a fix, not a style preference.
+
+    The `default()` form read a variable NO CALLER EVER SET, so its value came
+    from `Undefined` handling — and `default()` decides via
+    `isinstance(value, Undefined)`. When a process holds TWO copies of the
+    jinja2 package, `Context.resolve_or_missing` returns copy A's `missing`
+    sentinel while the compiled template's `is missing` test compares against
+    copy B's. `_MissingType` is not an `Undefined` and is truthy, so
+    `default(..., true)` returned the foreign sentinel verbatim, `indent`
+    received it as its `width`, and codegen died with
+    "can't multiply sequence by non-int of type '_MissingType'". Two jinja2
+    copies is exactly what `mock.patch.dict("sys.modules", ...)` produces on
+    exit — it clears sys.modules and restores its entry snapshot, evicting
+    every module first imported inside the block. That is a real condition in
+    this repo's test suite (118 modules use that idiom), and it broke all 18
+    tests in tests/integration/pipeline_flow/test_code_generation_e2e.py.
+
+    Both branches here are int literals, so `indent`'s width cannot be a
+    sentinel regardless of how many jinja2 copies are loaded. If a template
+    ever nests differently, give it its own stage rather than reintroducing an
+    optional-variable read.
+
+    RUNTIME ARGUMENT RESOLUTION. `_runtime_arg` / `_adi_run_id` /
+    `_adi_effective_run_id` come from _partials/_runtime_args.py.j2, which
+    resolves ONLY run_id. `pipeline_id` and `state_table` are resolved HERE,
+    through the same `_runtime_arg` helper, exactly as the s3_tables DQ
+    block does for its own write — the partial does not resolve them.
+
+    The write is gated on the real `--run_id` AND a non-empty pipeline_id,
+    the same gate shape the DQ write uses (`if _dq_outcomes and _dq_run_id`).
+    A manual "start job" run passes no Arguments, so there is no run to
+    attach counts to; and `pipeline_id` is a PipelineIndex GSI key, so an
+    empty one would be a ValidationException rather than a warning.
+-#}
+{%- set _lc_rows_written = '0' if load_counts_stage == 'empty_source' else 'transformed_count' -%}
+{%- set _lc_write_confirmed = 'True' if load_counts_stage == 'post_write' else 'False' -%}
+{%- set _lc_dedup_on = quality_config is mapping and quality_config.get("dedup_enabled") is true -%}
+{%- set _lc_rows_deduplicated = '0' if load_counts_stage == 'empty_source' else '_adi_dedup_dropped' -%}
+{%- filter indent(8 if load_counts_stage == 'empty_source' else 4, true) -%}
+# p37 R1.1/R1.11: record Rows_Read / Rows_Written for this run
+# (stage: {{ load_counts_stage }}). Best-effort telemetry (R1.13) — a failure
+# here must NOT fail a job that has already written to the target, so the
+# whole block is wrapped like the DQ state write. Reuses the existing
+# source_count / transformed_count locals — this block counts nothing itself.
+try:
+    import boto3 as _adi_lc_boto3
+    from botocore.config import Config as _adi_lc_Config
+    from datetime import datetime as _adi_lc_dt, timezone as _adi_lc_tz
+
+    # Bounded, single attempt: this job may have no route to DynamoDB, and an
+    # unbounded client turns a best-effort metric into minutes of stalled time.
+    _adi_lc_ddb_config = _adi_lc_Config(connect_timeout=3, read_timeout=5, retries={"max_attempts": 0})
+    # run_id comes from _runtime_args; pipeline_id and state_table are
+    # resolved here through the same _runtime_arg helper (_runtime_args
+    # resolves run_id only).
+    _adi_lc_pipeline_id = _runtime_arg("pipeline_id")
+    _adi_lc_state_table = _runtime_arg("state_table", "agentic_data_ingestion_state")
+    # int()/bool() are explicit so no float and no py4j numeric can reach
+    # DynamoDB — the row is ints, strings and bools only.
+    _adi_lc_rows_read = int(source_count)
+    _adi_lc_rows_written = int({{ _lc_rows_written }})
+    _adi_lc_write_confirmed = bool({{ _lc_write_confirmed }})
+{%- if _lc_dedup_on %}
+    # p64 R7.6: rows removed by deduplication, so rows_read - rows_written stays
+    # decomposable instead of attributing the drop to quarantine or the transform.
+    _adi_lc_rows_deduplicated = int({{ _lc_rows_deduplicated }})
+{%- endif %}
+    if _adi_run_id and _adi_lc_pipeline_id:
+        _adi_lc_boto3.resource("dynamodb", config=_adi_lc_ddb_config).Table(_adi_lc_state_table).put_item(
+            Item={
+                "run_id": _adi_run_id,
+                "step_name": "load_metrics",
+                # Both spellings, same value, as run_pipeline writes them
+                # (run_pipeline/lambda_function.py:161-163).
+                # execution_updater prefers original_pipeline_id (:173).
+                "pipeline_id": _adi_lc_pipeline_id,
+                "original_pipeline_id": _adi_lc_pipeline_id,
+                "rows_read": _adi_lc_rows_read,
+                "rows_written": _adi_lc_rows_written,
+{%- if _lc_dedup_on %}
+                "rows_deduplicated": _adi_lc_rows_deduplicated,
+{%- endif %}
+                "write_confirmed": _adi_lc_write_confirmed,
+                "source": "glue_job",
+                "timestamp": _adi_lc_dt.now(_adi_lc_tz.utc).isoformat(),
+            }
+        )
+        logger.info(
+            f"Load metrics recorded: rows_read={_adi_lc_rows_read}, "
+            f"rows_written={_adi_lc_rows_written}, "
+{%- if _lc_dedup_on %}
+            f"rows_deduplicated={_adi_lc_rows_deduplicated}, "
+{%- endif %}
+            f"write_confirmed={_adi_lc_write_confirmed}"
+        )
+    else:
+        logger.info(
+            "Load metrics not recorded: no --run_id/--pipeline_id "
+            "(manual job start) — Load_Outcome reads not_established"
+        )
+except Exception as _adi_lc_err:
+    logger.warning(f"Failed to write load metrics to DynamoDB: {_adi_lc_err}")
+{%- endfilter -%}

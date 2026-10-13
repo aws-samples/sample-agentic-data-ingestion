@@ -1,0 +1,3 @@
+# Shared Lambda layer dependencies
+jinja2>=3.1.0
+aws-lambda-powertools[metrics]>=2.0.0

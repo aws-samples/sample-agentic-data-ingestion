@@ -1,0 +1,6 @@
+# PyArrow for Parquet metadata-only schema extraction (Phase 9)
+# Installed via a dedicated Lambda layer (PyArrowLayer in compute-stack.ts).
+# s3fs is excluded to stay under the 250MB combined layer limit —
+# Parquet and ORC footer reads use pyarrow.fs.S3FileSystem instead, which
+# gives the same seekable handle without downloading the object.
+pyarrow>=14.0.0

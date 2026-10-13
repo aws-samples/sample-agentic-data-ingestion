@@ -1,0 +1,28 @@
+{#- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    SPDX-License-Identifier: MIT-0 -#}
+{#- _partials/_runtime_args.py.j2 — optional runtime-argument resolution (P28 R19.9).
+
+    Single mechanism for optional runtime arguments across all job templates:
+    --run_id / --pipeline_id / --state_table are supplied by run_pipeline's
+    StartJobRun Arguments and resolved via getResolvedOptions.
+    getResolvedOptions raises on absent arguments and manual job starts (e.g.
+    the dashboard's "start job", which passes no Arguments) must not crash, so
+    resolution is gated on sys.argv presence — the standard Glue
+    optional-argument pattern. Manual runs fall back to the Glue-provided
+    JOB_RUN_ID, which the top-level getResolvedOptions call always parses as a
+    reserved optional argument (requesting it explicitly is disallowed), so
+    per-run S3 locations (checkpoints, DQ quarantine) stay per-run — never a
+    shared 'default'. -#}
+# Optional runtime arguments (P28 R19.9): resolved via getResolvedOptions,
+# gated on sys.argv presence (getResolvedOptions raises on missing args and
+# manual job starts pass no Arguments).
+def _runtime_arg(_name, _default=""):
+    if f"--{_name}" in sys.argv:
+        return getResolvedOptions(sys.argv, [_name])[_name]
+    return _default
+
+# Manual runs fall back to the Glue-provided JOB_RUN_ID (already parsed into
+# `args` by getResolvedOptions as a reserved optional argument) so per-run S3
+# locations never collapse into a shared 'default'.
+_adi_run_id = _runtime_arg("run_id")
+_adi_effective_run_id = _adi_run_id or args.get("JOB_RUN_ID") or "unknown"

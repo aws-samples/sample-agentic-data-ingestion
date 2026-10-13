@@ -1,0 +1,6 @@
+CustomerNumber,GivenName,Surname,EmailAddr,Tel,DateJoined,MembershipStatus,PreferredLanguage,DateOfBirth
+8001,Henrik,Larsson,henrik.l@email.com,+46-555-0801,2024-07-01,Gold,sv,1985-03-15
+8002,Fatima,Al-Hassan,fatima.ah@email.com,+971-555-0802,2024-07-02,Silver,ar,1990-08-22
+8003,Liam,O'Brien,liam.ob@email.com,+353-555-0803,2024-07-03,Bronze,en,1978-11-30
+8004,Chen,Wei,chen.wei@email.com,+86-555-0804,2024-07-04,Gold,zh,1992-05-10
+8005,Isabella,Santos,isabella.s@email.com,+55-555-0805,2024-07-05,Silver,pt,1988-01-25

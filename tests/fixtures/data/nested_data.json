@@ -1,0 +1,68 @@
+[
+  {
+    "id": 1,
+    "name": "Alice Johnson",
+    "contact": {
+      "email": "alice.johnson@example.com",
+      "phone": "+1-555-0101",
+      "address": {
+        "street": "123 Main St",
+        "city": "Springfield",
+        "state": "IL",
+        "zip": "62701"
+      }
+    },
+    "orders": [
+      {"order_id": "ORD-001", "amount": 99.99, "date": "2024-01-20"},
+      {"order_id": "ORD-002", "amount": 149.50, "date": "2024-02-10"}
+    ],
+    "metadata": {
+      "source": "web",
+      "tags": ["premium", "active"],
+      "preferences": {
+        "notifications": true,
+        "language": "en"
+      }
+    }
+  },
+  {
+    "id": 2,
+    "name": "Bob Smith",
+    "contact": {
+      "email": "bob.smith@example.com",
+      "phone": "+1-555-0102",
+      "address": {
+        "street": "456 Oak Ave",
+        "city": "Portland",
+        "state": "OR",
+        "zip": "97201"
+      }
+    },
+    "orders": [],
+    "metadata": {
+      "source": "api",
+      "tags": [],
+      "preferences": {
+        "notifications": false,
+        "language": "en"
+      }
+    }
+  },
+  {
+    "id": 3,
+    "name": "Carol Williams",
+    "contact": {
+      "email": "carol.williams@example.com",
+      "phone": null,
+      "address": null
+    },
+    "orders": [
+      {"order_id": "ORD-003", "amount": 25.00, "date": "2024-03-01"}
+    ],
+    "metadata": {
+      "source": "import",
+      "tags": ["new"],
+      "preferences": null
+    }
+  }
+]

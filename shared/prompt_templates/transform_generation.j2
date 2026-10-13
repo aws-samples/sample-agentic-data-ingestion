@@ -1,0 +1,209 @@
+{#- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    SPDX-License-Identifier: MIT-0 -#}
+Given these field mappings:
+{% for m in mappings %}
+  {{ m.source_field }}{% if m.get('source_type') %} ({{ m.source_type }}){% endif %} → {{ m.target_field }}{% if m.get('target_type') %} ({{ m.target_type }}){% endif %}{% if m.get('transformation') %}, {{ m.transformation }}{% elif m.get('transform') %}, {{ m.transform }}{% endif %}{% if m.get('confidence') %} [confidence: {{ m.confidence }}]{% endif %}
+{% endfor %}
+{#
+  p33 D10 / requirement 2.5: the target schema's DECLARED field names and
+  types. This is the information the field mappings alone cannot carry — a
+  mapping line enumerates a mapped PAIR, so a target field that no mapping
+  covers appears nowhere in the block above. It is also exactly the column set
+  the run is measured against: _build_validation_code derives `expected` from
+  target_schema["properties"].keys() (code_interpreter_runner.py:356), so the
+  generator now sees the same list the schema_compliance gate scores it on.
+
+  `| default({}, true)` rather than a bare `| default` because the slot must
+  tolerate BOTH an omitted variable and an explicit None: the loader renders
+  with StrictUndefined (shared/prompt_template_loader.py:56), where a render
+  failure lands mid-pipeline rather than at synth (LGR-d3c81fc-1, V7), and
+  generate_transform_with_ai's parameter defaults to None.
+
+  `properties` only, with no `fields`-array branch: resolve_target_schema
+  normalises both accepted shapes to `properties` before this renders
+  (shared/target_schema_resolution.py:151-209), so a `fields` branch would be
+  dead on the live path. A schema that normalisation did not recognise carries
+  no `properties` and renders no block — the generator is told nothing rather
+  than something wrong.
+
+  WHITESPACE CONTROL IS LOAD-BEARING HERE, not style. Every tag below shares a
+  line with its own content and uses the trailing-dash form, so that when there
+  is no target schema this block emits ZERO bytes. Without that, ~22 tag-only
+  lines each contributed a newline, and a 10-field mapping went from 498 to 504
+  of the 500-token budget test_transform_prompt.py asserts — a budget p32's
+  T11a already left with about 2 tokens of headroom. The first draft of this
+  block did exactly that, and the budget test caught it.
+
+  (This comment also cannot quote a Jinja end-tag verbatim: the lexer would end
+  the comment at the first one. That is why the form is named, not shown.)
+
+  p37 R3.5 / design C12: `unsourced_target_fields` names the target fields the
+  mapping claims but supplies no source column for. It ANNOTATES the per-field
+  line below — no new line, no new block — because the 498 → 504 incident above
+  was caused by tag-only lines, and a second sentence here would cost the same
+  way. Measured with the project venv against test_transform_prompt.py's own
+  estimator (len(text) // 4): the no-target_schema case stays byte-identical at
+  498 tokens / 1994 chars, the live 11-field shape stays 597 / 2391 when nothing
+  is unsourced, and each unsourced field costs +7 tokens / +26 chars.
+
+  The annotation says "set it to null/default", NEVER "omit the column".
+  _build_validation_code derives `expected` from
+  target_schema["properties"].keys() (test_code/code_interpreter_runner.py), so
+  a missing target column fails the schema_compliance gate — telling the model
+  to skip an unsourced field would trade a quarantine for a failed run. With
+  p37 C7 removing the Completeness rule for the same field, an explicit null is
+  the honest outcome: the data loads, the column is null, and the human was
+  told at mapping approval (C10).
+
+  `| default([], true)` for the same reason target_schema uses it: the loader
+  renders with StrictUndefined (LGR-d3c81fc-1 records the crash that form
+  prevents), and generate_transform_with_ai's parameter defaults to None. An
+  omitted OR None context therefore renders byte-identically to before C12.
+  The `set` shares a line with the target_fields `set` above so it contributes
+  no newline of its own.
+
+  p49 R7.3 / design C4: the CRITICAL RULES cast line used to demand an explicit
+  date format "from the hint or samples". The prompt carries no samples — it
+  renders the mapping lines, this target-schema block, an optional feedback
+  section and the rules, and nothing else — so a third of that instruction was
+  unfollowable, and the model that satisfied the other two thirds copied the
+  format out of the hint's own parenthetical example onto MM/dd/yyyy data. The
+  clause is now "from the hint" only, which is both shorter and true: under p49
+  C2 the mapping agent is shown sample values and told to write the format it
+  reads off them into `transformation`, which is the text the mapping lines
+  above already render. The explicit-format requirement and NEVER format-less
+  are unchanged — the observed defect was a WRONG explicit format, not a
+  missing one.
+
+  The figures in the C12 paragraph above are as measured at p37, and dropping
+  " or samples" moves every one of them down by 11 chars. Re-measured with the
+  project venv against test_transform_prompt.py's own estimator: no-schema
+  10-field 498 / 1994 -> 495 / 1983, 5-field 425 / 1703 -> 423 / 1692, the live
+  11-field target-schema shape 597 / 2391 -> 595 / 2380, and the same annotated
+  604 / 2417 -> 601 / 2406. C12's PER-FIELD costs are untouched: an unsourced
+  field is still +7 tokens / +26 chars and the no-schema case is still
+  byte-identical whatever `unsourced_target_fields` carries. This edit rides
+  INLINE on the existing rule line for the reason the 498 -> 504 incident
+  records: a line of its own would have cost a newline, and the no-schema
+  render had 1 token / 5 chars of headroom under the 500-token assertion, so
+  any addition of 6 or more characters would have tripped it. Removing text was
+  the only direction with room.
+
+  p49 R4.2 / design C4, task 4.2: the allowed-function line offered SIXTEEN
+  names, of which SIX -- initcap, substring, coalesce, length, split, expr --
+  are in `_UNSUPPORTED_FUNCTIONS` (pyspark_to_pandas.py:573-587, membership
+  verified by reading all four vocabulary frozensets). The remaining TEN were
+  exactly `_SUPPORTED_FUNCTIONS` (:545-547), so the list was the translator's
+  supported set plus its six most tempting refusals, and the line is now
+  narrowed to those ten. That narrowing has a DEFINITION rather than being a
+  hand-trim: `pyspark_to_pandas.py`'s vocabulary comment (:514-534) records
+  that in FUNCTION position an unrecognised bare name refuses "whether or not
+  it is enumerated", so the offered list and the locally-verifiable set are now
+  the same set by construction. A refused construct does not fail the run --
+  `convert()` raises ConversionError and the transform reaches production
+  UNVERIFIED by the proxy, which is the cost the caveat now names at the point
+  of offer.
+
+  KEEP THE PARENTHESISED FORM. `tests/unit/lambdas/test_code/
+  test_converter_vocabulary_closure_prop.py:prompt_offered_functions` extracts
+  this line with the regex `pyspark\.sql\.functions \(([^)]*)\)` and asserts at
+  MODULE level that it matched, so the assertion fires at COLLECTION time and
+  takes the whole file with it. A first draft of this task rewrote the line as
+  "Use ONLY these pyspark.sql.functions: ..." and dropped the parentheses; the
+  scope run failed to collect. The caveat therefore sits OUTSIDE the closing
+  paren, where `[^)]*` has already stopped. That same function harvests two
+  further shapes as offers -- a call illustration of the form NAME-open-paren-
+  col-open-paren, and an "imported as" instruction -- which is why the rule
+  below needed MARKING rather than leaving: by that test's own definition the
+  title-case illustration in it IS an offer.
+
+  AND MIND WHAT THIS COMMENT ITSELF SAYS. That extraction reads the RAW
+  template, Jinja comments included, so prose here that happens to match either
+  shape is harvested as an offered function name. A first draft of this
+  paragraph spelled both regexes out with placeholder names and added two
+  non-existent functions to the offered set, failing
+  `test_offered_function_is_enumerated` twice. Hence the shapes are described in
+  words above rather than quoted. Do not "tidy" them back into literals.
+
+  NOTE a correction to requirements R4.2, which says a coalesce refusal reads
+  as PERMANENT. It does not: `_PERMANENTLY_INEXPRESSIBLE_CONSTRUCTS`
+  (code_interpreter_runner.py:164-186) holds nineteen members and none of the
+  six is among them, so `classify_conversion_refusal` returns the NOT_YET
+  reason -- the one its own docstring says means "this is a defect in this
+  system". The cost R4.2 aims at is real; its classification was wrong.
+
+  The CRITICAL RULES line below that works substring / initcap / expr / length
+  as EXAMPLES is deliberately KEPT, and marked "If forced:" instead. Three
+  reasons it is not deleted. (1) `transform_generation.py:250-254` is a
+  production validator whose remediation message tells the model to "use
+  initcap(col(...)) for title-case or expr(...) for variable slicing" -- delete
+  the prompt guidance and that advice is stranded in a file this task does not
+  own. (2) `tests/unit/lambdas/test_code/test_passthrough_and_alias_refusal.py`
+  :728-732 cites this prompt line by content as the reason its production-shape
+  fixture exists ("the case whose refusal an operator actually reads"). (3) All
+  five `pyspark_templates/*.j2` scaffolds still IMPORT all six at module scope,
+  a binding pinned by `tests/contracts/test_transform_namespace_matches_
+  templates.py`, so the names remain live in the generated job and correct
+  spelling still matters when a hint forces one. What changed is that the line
+  no longer reads as an offer.
+
+  NO ledger record governs this line, and the id that appears to is dead.
+  `LGR-2600abb-1` does not resolve -- `chesterton record` reports no such id
+  and `LGR-8e34f37-1` (template / ratified) states outright that commit
+  2600abb, "P16 retry-from-any-step API", "produced no record in the current
+  ledger, so its rationale exists only as commit prose". `LGR-b2f79ef-10`
+  (template / ratified) is where the id surfaces, and it cites it precisely to
+  say "No ledger record governs the prompt's shape or inputs ... That is a
+  ledger gap, stated as a gap and not as an all-clear." So nothing ratified put
+  the six here, and `LGR-60c4985-5` cites the same dead id for a Step Functions
+  ASL choice-state decision -- the commit is broad, not a fence on this line.
+
+  Measured after this edit, project venv against test_transform_prompt.py's own
+  estimator: no-schema 10-field 495 / 1983, 5-field 423 / 1692, live 11-field
+  target-schema shape 595 / 2380, same annotated 601 / 2406 -- every figure
+  BYTE-IDENTICAL to 4.1's above, because the two edits cancel exactly. Both
+  lines render unconditionally; dropping the six names costs -11 chars and the
+  "If forced: " marker costs +11. Net ZERO, so 4.1's headroom of 16 chars under
+  the 500-token assertion survives 4.2 untouched, and this edit cannot trip
+  `:41`, `:49`, `:359`, `test_target_schema_in_transform_prompt.py:460`, or
+  either 650 ceiling. C12's +7 tokens / +26 chars per unsourced field is
+  unchanged, re-measured. The wording was chosen for that: two longer caveats
+  measured 1988 and 2006 chars, and the 2006 one (501 tokens) would have
+  tripped `:41`.
+
+  Out of scope here, recorded so it is not mistaken for an oversight: the
+  "count is imported as spark_count" rule below names `spark_count`, which is
+  ALSO in `_UNSUPPORTED_FUNCTIONS`. It is a naming fact rather than an offer,
+  and `pyspark_to_pandas.py`'s own comment cites this template as the reason
+  that alias is enumerated there, so changing it is a two-file decision this
+  task did not take.
+-#}
+{% set target_fields = (target_schema | default({}, true)).get('properties', {}) %}{% set unsourced_fields = unsourced_target_fields | default([], true) -%}
+{% if target_fields %}TARGET SCHEMA declares these {{ target_fields | length }} field(s) — df_transformed MUST contain a column for every one, named exactly as listed:
+{% for name, spec in target_fields.items() %}  {{ name }} ({{ spec.get('type', 'string') if spec is mapping else spec }}{% if spec is mapping and spec.get('format') %}, format {{ spec.format }}{% endif %}){% if name in unsourced_fields %} — NO SOURCE: null/default{% endif %}
+{% endfor %}{% endif -%}
+{# P28 R13.3: on regeneration the reviewer's issues are injected here so the #}
+{# new prompt differs from the original (no identical-prompt retries). #}
+{% if feedback_section | default('') %}
+{{ feedback_section }}
+{% endif %}
+
+Generate ONLY the PySpark transformation code.
+Input DataFrame: `df`. Output DataFrame: `df_transformed`.
+Use only: .select(), .withColumn(), .withColumnRenamed(), .cast(), .filter(), .drop()
+Use functions from: pyspark.sql.functions (col, lit, trim, lower, to_date, to_timestamp, when, concat_ws, regexp_replace, upper) — anything else is NOT locally verified
+
+CRITICAL RULES:
+- String functions WRAP the column: lower(col("f")), trim(col("f")) — never .lower()/.trim() methods
+- If forced: substring(col, pos, len) needs int LITERALS; title-case: initcap(col("f")); variable slicing: expr("substring(f, p, length(f))")
+- count is imported as spark_count
+- Cast only to the mapping's TARGET type: .cast(IntegerType()); dates/timestamps ALWAYS with an explicit format from the hint: to_date(col("f"), "dd-MM-yyyy") — NEVER format-less
+- "direct" to a string target = pass through unchanged; add NO casts or cleanups the mappings do not ask for
+- No no-ops (self-rename/alias, unchanged re-select); all-direct → df_transformed = df
+
+STRUCTURE (each line converts alone — multi-line calls FAIL):
+- ONE .withColumn per statement, one statement per line; first reads df, each next reads df_transformed
+- .select() only as a final standalone line with plain string names
+
+Do NOT create classes, helper functions, or imports.
+Output ONLY the Python code, no markdown fences.

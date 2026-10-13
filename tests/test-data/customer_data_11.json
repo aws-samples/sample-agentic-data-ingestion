@@ -1,0 +1,7 @@
+[
+  {"client_id": 11001, "given_name": "Oscar", "family_name": "Nguyen", "email": "oscar.n@email.com", "telephone": "555-1101", "enrollment_date": "2024-10-01", "account_type": "standard", "loyalty_points": 1250},
+  {"client_id": 11002, "given_name": "Maya", "family_name": "Patel", "email": "maya.p@email.com", "telephone": "555-1102", "enrollment_date": "2024-10-02", "account_type": "premium", "loyalty_points": 4800},
+  {"client_id": 11003, "given_name": "Felix", "family_name": "Quinn", "email": "felix.q@email.com", "telephone": "555-1103", "enrollment_date": "2024-10-03", "account_type": "standard", "loyalty_points": 320},
+  {"client_id": 11004, "given_name": "Nora", "family_name": "Rivera", "email": "nora.r@email.com", "telephone": "555-1104", "enrollment_date": "2024-10-04", "account_type": "premium", "loyalty_points": 7100},
+  {"client_id": 11005, "given_name": "Leo", "family_name": "Sullivan", "email": "leo.s@email.com", "telephone": "555-1105", "enrollment_date": "2024-10-05", "account_type": "trial", "loyalty_points": 0}
+]

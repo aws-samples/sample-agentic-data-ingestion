@@ -1,0 +1,17 @@
+# Build context for S3TablesImage is this directory (agentcore-stack.ts passes
+# `directory: path.join(mcpRoot, 's3_tables')`), so the sibling mcp/.dockerignore
+# does NOT apply here — DockerImageAsset only reads the .dockerignore that sits
+# in the context root. This file is that one.
+#
+# The Dockerfile COPYs exactly two files: requirements.txt and
+# agentcore_s3tables_mcp.py. Everything below is either not COPY'd or is
+# generated locally, and a generated file in the context changes the asset hash
+# on every synth — which is what kept this asset restaging.
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.DS_Store
+**/.venv
+README.md
+test_*.py

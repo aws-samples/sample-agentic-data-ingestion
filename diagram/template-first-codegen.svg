@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="660" viewBox="0 0 1200 660" font-family="'Amazon Ember','Helvetica Neue',Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5F6B7A"/>
+    </marker>
+    <marker id="a2p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8C4FFF"/>
+    </marker>
+    <marker id="a2r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#D13212"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="660" fill="#FFFFFF"/>
+
+  <text x="600" y="36" text-anchor="middle" font-size="21" font-weight="700" fill="#232F3E">Template-first code generation and the parameter contract</text>
+  <text x="600" y="58" text-anchor="middle" font-size="13" fill="#5F6B7A">The model writes only the transform. The template is the single source of truth for the job's parameters.</text>
+
+  <!-- ===== Column 1: inputs ===== -->
+  <text x="40" y="94" font-size="12" font-weight="700" fill="#5F6B7A" letter-spacing="0.6">INPUTS</text>
+
+  <rect x="40" y="104" width="214" height="42" rx="6" fill="#FFFFFF" stroke="#8C8FA3" stroke-width="1.4"/>
+  <text x="54" y="122" font-size="12.5" font-weight="600" fill="#232F3E">Approved field mappings</text>
+  <text x="54" y="137" font-size="10.5" fill="#5F6B7A">source field → target field</text>
+
+  <rect x="40" y="154" width="214" height="42" rx="6" fill="#FFFFFF" stroke="#8C8FA3" stroke-width="1.4"/>
+  <text x="54" y="172" font-size="12.5" font-weight="600" fill="#232F3E">Source schema</text>
+  <text x="54" y="187" font-size="10.5" fill="#5F6B7A">names, types, source format</text>
+
+  <rect x="40" y="204" width="214" height="42" rx="6" fill="#FFFFFF" stroke="#0972D3" stroke-width="1.6"/>
+  <text x="54" y="222" font-size="12.5" font-weight="600" fill="#232F3E">Target type</text>
+  <text x="54" y="237" font-size="10.5" fill="#5F6B7A">selects the template — deterministic</text>
+
+  <path d="M 254 175 L 292 175" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#a2)"/>
+
+  <!-- ===== Column 2: the template ===== -->
+  <rect x="298" y="86" width="330" height="330" rx="9" fill="#F7F9FC" stroke="#0972D3" stroke-width="1.6"/>
+  <text x="314" y="108" font-size="12.5" font-weight="700" fill="#0972D3">Jinja2 template — one per target type</text>
+  <text x="314" y="124" font-size="10.5" fill="#5F6B7A">deterministic scaffold, written and reviewed once</text>
+
+  <g font-size="11.5" fill="#232F3E">
+    <rect x="314" y="134" width="298" height="26" rx="4" fill="#FFFFFF" stroke="#C6D2E1"/>
+    <text x="326" y="151">imports</text>
+
+    <rect x="314" y="164" width="298" height="26" rx="4" fill="#FFFFFF" stroke="#C6D2E1"/>
+    <text x="326" y="181">GlueContext / SparkSession setup</text>
+
+    <rect x="314" y="194" width="298" height="26" rx="4" fill="#FFFFFF" stroke="#C6D2E1"/>
+    <text x="326" y="211">getResolvedOptions(...) — argument parsing</text>
+
+    <rect x="314" y="224" width="298" height="26" rx="4" fill="#FFFFFF" stroke="#C6D2E1"/>
+    <text x="326" y="241">format-aware source read</text>
+
+    <!-- the generated slot -->
+    <rect x="314" y="256" width="298" height="52" rx="5" fill="#F3EDFF" stroke="#8C4FFF" stroke-width="2"/>
+    <circle cx="332" cy="273" r="4.5" fill="#8C4FFF"/>
+    <text x="344" y="277" font-size="11.5" font-weight="700" fill="#6B4FA8">transform block — generated</text>
+    <text x="326" y="295" font-size="10.5" fill="#6B4FA8">typically 5–15 lines · the only model output</text>
+
+    <rect x="314" y="314" width="298" height="26" rx="4" fill="#FFFFFF" stroke="#C6D2E1"/>
+    <text x="326" y="331">target write — overwrite / append / merge</text>
+
+    <rect x="314" y="344" width="298" height="26" rx="4" fill="#FFFFFF" stroke="#C6D2E1"/>
+    <text x="326" y="361">optional data quality evaluation</text>
+
+    <rect x="314" y="374" width="298" height="26" rx="4" fill="#FFFFFF" stroke="#C6D2E1"/>
+    <text x="326" y="391">job.commit()</text>
+  </g>
+
+  <!-- bedrock callout -->
+  <rect x="40" y="272" width="214" height="86" rx="7" fill="#F3EDFF" stroke="#8C4FFF" stroke-width="1.5"/>
+  <text x="54" y="292" font-size="12" font-weight="700" fill="#6B4FA8">Amazon Bedrock</text>
+  <text x="54" y="309" font-size="10.5" fill="#6B4FA8">Converse API, so the model is</text>
+  <text x="54" y="323" font-size="10.5" fill="#6B4FA8">selectable per pipeline without</text>
+  <text x="54" y="337" font-size="10.5" fill="#6B4FA8">a code change. Its output is</text>
+  <text x="54" y="351" font-size="10.5" fill="#6B4FA8">confined to one block.</text>
+  <path d="M 254 300 L 280 300 L 280 282 L 306 282" fill="none" stroke="#8C4FFF" stroke-width="1.6" marker-end="url(#a2p)"/>
+
+  <path d="M 628 251 L 668 251" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#a2)"/>
+
+  <!-- ===== Column 3: render and contract ===== -->
+  <text x="676" y="94" font-size="12" font-weight="700" fill="#5F6B7A" letter-spacing="0.6">RENDER, THEN PROVE THE CONTRACT</text>
+
+  <rect x="676" y="104" width="484" height="46" rx="6" fill="#FFFFFF" stroke="#8C8FA3" stroke-width="1.4"/>
+  <text x="690" y="124" font-size="13" font-weight="600" fill="#232F3E">1. Render the template</text>
+  <text x="690" y="140" font-size="10.5" fill="#5F6B7A">scaffold + transform block → the complete PySpark job</text>
+
+  <path d="M 918 150 L 918 166" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#a2)"/>
+
+  <rect x="676" y="170" width="484" height="46" rx="6" fill="#FFFFFF" stroke="#0972D3" stroke-width="1.6"/>
+  <text x="690" y="190" font-size="13" font-weight="600" fill="#232F3E">2. Parse the required parameters back out</text>
+  <text x="690" y="206" font-size="10.5" fill="#5F6B7A">read from the rendered code, not from a second hand-kept list</text>
+
+  <path d="M 918 216 L 918 232" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#a2)"/>
+
+  <rect x="676" y="236" width="484" height="46" rx="6" fill="#FFFFFF" stroke="#8C8FA3" stroke-width="1.4"/>
+  <text x="690" y="256" font-size="13" font-weight="600" fill="#232F3E">3. Resolve each value from pipeline and run state</text>
+  <text x="690" y="272" font-size="10.5" fill="#5F6B7A">source path, target location, credentials by Secrets Manager ARN</text>
+
+  <path d="M 918 282 L 918 298" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#a2)"/>
+
+  <rect x="676" y="302" width="484" height="60" rx="6" fill="#FFF8F6" stroke="#D13212" stroke-width="1.7"/>
+  <text x="690" y="322" font-size="13" font-weight="600" fill="#232F3E">4. Validate before the job exists</text>
+  <text x="690" y="338" font-size="10.5" fill="#5F6B7A">every required parameter present and non-empty, or the run fails here —</text>
+  <text x="690" y="352" font-size="10.5" fill="#5F6B7A">not at Spark startup, minutes later, with a half-built job to clean up</text>
+
+  <path d="M 918 362 L 918 378" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#a2)"/>
+
+  <rect x="676" y="382" width="484" height="46" rx="6" fill="#F4F8EC" stroke="#7AA116" stroke-width="1.7"/>
+  <text x="690" y="402" font-size="13" font-weight="600" fill="#232F3E">5. Create the AWS Glue 5.0 job</text>
+  <text x="690" y="418" font-size="10.5" fill="#5F6B7A">DefaultArguments match getResolvedOptions exactly, by construction</text>
+
+  <!-- failure terminal -->
+  <path d="M 676 332 L 648 332 L 648 458 L 672 458" fill="none" stroke="#D13212" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#a2r)"/>
+  <rect x="678" y="440" width="330" height="36" rx="6" fill="#FFF8F6" stroke="#D13212" stroke-width="1.4"/>
+  <text x="692" y="463" font-size="11.5" font-weight="600" fill="#D13212">Run fails here — no Glue job is created</text>
+  <text x="1020" y="463" font-size="10.5" font-style="italic" fill="#5F6B7A">nothing to roll back</text>
+
+  <!-- ===== bottom: why it matters ===== -->
+  <rect x="40" y="504" width="1120" height="126" rx="9" fill="#F7F9FC" stroke="#C6D2E1" stroke-width="1.2"/>
+  <text x="58" y="528" font-size="13" font-weight="700" fill="#232F3E">What this buys you</text>
+
+  <text x="58" y="552" font-size="11.5" fill="#232F3E" font-weight="600">Smaller blast radius</text>
+  <text x="58" y="569" font-size="10.5" fill="#5F6B7A">A hallucinated import or a stray wrapper class has</text>
+  <text x="58" y="583" font-size="10.5" fill="#5F6B7A">nowhere to land. Imports, session setup and the</text>
+  <text x="58" y="597" font-size="10.5" fill="#5F6B7A">commit are fixed text that a human reviewed once,</text>
+  <text x="58" y="611" font-size="10.5" fill="#5F6B7A">so review attention goes to the logic that varies.</text>
+
+  <line x1="428" y1="540" x2="428" y2="614" stroke="#C6D2E1" stroke-width="1.2"/>
+
+  <text x="450" y="552" font-size="11.5" fill="#232F3E" font-weight="600">Reviewable diffs</text>
+  <text x="450" y="569" font-size="10.5" fill="#5F6B7A">Two runs of the same pipeline differ only inside the</text>
+  <text x="450" y="583" font-size="10.5" fill="#5F6B7A">transform block, so a reviewer at the approval gate</text>
+  <text x="450" y="597" font-size="10.5" fill="#5F6B7A">reads a handful of changed lines instead of</text>
+  <text x="450" y="611" font-size="10.5" fill="#5F6B7A">re-reading a whole generated file.</text>
+
+  <line x1="820" y1="540" x2="820" y2="614" stroke="#C6D2E1" stroke-width="1.2"/>
+
+  <text x="842" y="552" font-size="11.5" fill="#232F3E" font-weight="600">A class of failure removed</text>
+  <text x="842" y="569" font-size="10.5" fill="#5F6B7A">Parameter mismatch between generated code and</text>
+  <text x="842" y="583" font-size="10.5" fill="#5F6B7A">job configuration is the most common way a</text>
+  <text x="842" y="597" font-size="10.5" fill="#5F6B7A">generated Glue job dies at startup. Deriving the</text>
+  <text x="842" y="611" font-size="10.5" fill="#5F6B7A">arguments from the code makes it unreachable.</text>
+</svg>

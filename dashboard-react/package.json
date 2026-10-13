@@ -1,0 +1,41 @@
+{
+  "name": "agentic-data-ingestion-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT-0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@cloudscape-design/components": "^3.0.0",
+    "@cloudscape-design/design-tokens": "^3.0.103",
+    "@cloudscape-design/global-styles": "^1.0.0",
+    "@tanstack/react-query": "^5.0.0",
+    "cron-parser": "^5.5.0",
+    "oidc-client-ts": "^3.5.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "react-oidc-context": "^3.3.1",
+    "react-router-dom": "^7.18.4"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.0.0",
+    "@testing-library/react": "^14.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "fast-check": "^3.15.0",
+    "jsdom": "^24.0.0",
+    "typescript": "~5.6.0",
+    "vite": "^6.4.3",
+    "vitest": "^4.1.11"
+  }
+}

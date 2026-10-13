@@ -1,0 +1,44 @@
+{# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+   SPDX-License-Identifier: MIT-0 #}    # Write to JDBC target
+{#- LGR-819980f-1 (standing invariant): JDBC credentials travel only as a Secrets
+    Manager reference. This partial is the ONE JDBC-target write, included by both
+    glue_job_jdbc.py.j2 (key_prefix '') and glue_job_jdbc_source.py.j2 ('target_'),
+    and its credential fetch is UNCONDITIONAL. It used to branch on
+    `target_secret_arn`; the `else` arm read args jdbc_user / jdbc_password, and
+    that plaintext pair in Glue job arguments is what leaked a target credential.
+    The arm is deleted, not defaulted off. `target_secret_arn` is no longer read by
+    any template (code_assembly still sets it; unused is harmless). The emitted
+    Python comment below names no credential token, so token fences on the
+    rendered script count code, not prose. Uses `json` and `boto3` from the
+    including template's module scope: both includers import them. #}
+    # Credentials are fetched from Secrets Manager at run time, by the reference
+    # passed as a job argument. Glue job arguments are visible in the console,
+    # CloudTrail and job-run history, so the reference is all they ever hold.
+    _target_secret = json.loads(
+        boto3.client("secretsmanager").get_secret_value(
+            SecretId=args['{{ key_prefix | default("") }}secret_arn']
+        )["SecretString"]
+    )
+    jdbc_properties = {
+        "user": _target_secret["username"],
+        "password": _target_secret["password"],
+        "driver": args['{{ key_prefix | default("") }}jdbc_driver'],
+    }
+    logger.info(f"Writing to JDBC table: {args['{{ key_prefix | default("") }}jdbc_table']}")
+{% if write_mode == 'overwrite' %}
+    df_transformed.write.jdbc(
+        url=args['{{ key_prefix | default("") }}jdbc_url'],
+        table=args['{{ key_prefix | default("") }}jdbc_table'],
+        mode="overwrite",
+        properties=jdbc_properties,
+    )
+{% else %}
+    df_transformed.write.jdbc(
+        url=args['{{ key_prefix | default("") }}jdbc_url'],
+        table=args['{{ key_prefix | default("") }}jdbc_table'],
+        mode="append",
+        properties=jdbc_properties,
+    )
+{% endif %}
+
+    logger.info(f"Write to JDBC target complete ({transformed_count} records)")

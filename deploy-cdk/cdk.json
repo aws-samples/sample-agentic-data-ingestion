@@ -1,0 +1,10 @@
+{
+  "app": "NODE_OPTIONS=--max-old-space-size=8192 npx ts-node --transpile-only bin/agentic_data_ingestion.ts",
+  "context": {
+    "environment": "dev",
+    "projectName": "agentic-data-ingestion",
+    "notificationEmail": "",
+    "@aws-cdk/customresources:installLatestAwsSdkDefault": false,
+    "@aws-cdk/core:defaultCrossStackReferences": "strong"
+  }
+}

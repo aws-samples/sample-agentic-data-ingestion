@@ -1,0 +1,223 @@
+{#- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    SPDX-License-Identifier: MIT-0 -#}
+{#- _partials/_dedup.py.j2 — the per-pipeline deduplication drop (p64 R7.1/R7.2).
+
+    WHAT IT EMITS. One `dropDuplicates` call on `df_transformed`, and nothing
+    else. When `quality_config.dedup_columns` is non-empty the columns are
+    interpolated as a Python list literal; when it is empty the call is made with
+    NO argument, which is Spark's own "every column" behaviour and is therefore
+    R7.2's default expressed directly rather than through a sentinel. p64 2c.2
+    settled that `[]` and an omitted `dedup_columns` mean the same thing, so
+    `code_assembly.resolve_quality_config` normalises both to `[]` and this
+    partial needs only the one test.
+
+    OFF BY DEFAULT, AND OFF MEANS ZERO RENDERED BYTES. R7.1 requires that no
+    existing pipeline's behaviour changes, so the disabled arm emits nothing at
+    all — not even a banner. That is stronger than it needs to be for
+    *behaviour* (a comment changes none) and it is deliberate: it keeps the
+    rendered job BYTE-IDENTICAL for every pipeline that has not opted in, which
+    is a property a test can assert cheaply over the whole render matrix
+    (`test_dedup_all_targets.py`'s
+    `test_the_disabled_render_is_byte_identical_to_the_pre_dedup_tree`). The DQ
+    partial beside it took the other option — its banner renders unconditionally
+    — because 2b.1 was a pure extraction that had to reproduce P28's existing
+    output line for line. This is a new block, so it has no such obligation.
+
+    WHITESPACE IS LOAD-BEARING HERE, which is unusual enough to say out loud, and
+    two separate pieces of it are.
+
+    (1) THE ZERO-BYTE DISABLED ARM. The caller's `{%- include %}` strips the
+    newline that ended the line above it, and this file's outer `{%- if %}` then
+    restores exactly one via the blank line that opens its body, while
+    `{%- endif -%}` strips the trailing one. Disabled, the two cancel to nothing.
+    Do not "tidy" either side's minus signs independently — they are one
+    expression, and the byte-identity test named above is what catches it.
+
+    (2) THE `dropDuplicates` LINES SHARE A LINE WITH THEIR `{% if %}` TAG, and
+    that is not a formatting slip. The render environment leaves `trim_blocks`
+    off, so a tag on its own line contributes the newline that follows it to the
+    branch body — which would emit a blank line between the banner and the call.
+    The obvious fix, closing the tag with the whitespace-stripping form, strips the
+    newline AND the four spaces of indentation behind it, producing
+    `df_transformed = …` at column 0 inside the job's `try:` and a job that does
+    not compile. That was written first and caught by `ast.parse` on the rendered
+    output, so the same-line form is the third option and the only correct one.
+
+    WHY THE EMPTY-COLUMN CASE IS A SEPARATE BRANCH RATHER THAN AN EMPTY LIST.
+    `dropDuplicates([])` is NOT `dropDuplicates()`: PySpark passes the subset
+    straight through to the JVM, so an empty subset deduplicates on zero columns
+    and collapses the entire frame to a single row. Silent, catastrophic, and
+    indistinguishable from a working job until someone counts the target. Emitting
+    the no-argument call is the only correct rendering of "all columns", which is
+    why `resolve_quality_config`'s `[]` must never reach the argument position.
+
+    WHERE THE CALLER MUST PUT IT: immediately BEFORE the DQ 'evaluate' include
+    site, i.e. after the transform and after any auto-cast/column selection, and
+    before `transformed_count`. That ordering is a decision, not a convenience,
+    and both halves of it matter:
+
+      * BEFORE the DQ split. `_generate_dqdl_rules` can emit
+        `Uniqueness "f" >= 0.95`, so duplicate rows can fail a DQDL rule. Placed
+        AFTER the split, those rows would be quarantined as quality failures
+        before dedup ever saw them: `rows_quarantined` would absorb the dedup
+        drops and the two row-loss causes would be reported as one. R7.6 forbids
+        exactly that ("`rows_read - rows_written` would attribute deduplication
+        to quarantine or to the transform"), and 2c.4 needs the two separable.
+        Placed here, a count either side of this block brackets the dedup drops
+        and nothing else.
+      * AFTER the column selection. R7.2's default is "all mapped target
+        columns", and after the select `df_transformed` carries exactly those —
+        so a bare `dropDuplicates()` IS that default. Before the select the frame
+        may still carry source-only columns, and two rows identical in every
+        target column but differing in a dropped one would both survive, leaving
+        duplicates in the target. That is R7.2 wrong rather than merely
+        different.
+      * NOT after `transformed_count`. That count is published as the DQ report's
+        `rows_passed` and as `_load_counts`' `rows_written`, so deduplicating
+        after it would make both describe a frame larger than the one written —
+        reintroducing the row-loss lie `shared/load_outcome.py` exists to remove.
+
+    THE PRECISE CLAIM ABOUT THE EMPTY-LIST DEFAULT, because "all mapped target
+    columns" is true of three templates and approximately true of two. The bare
+    call keys on every column of the frame that is about to be written, which is
+    the honest and useful reading on all five. It coincides with the mapped
+    target columns wherever a select has run: `glue_job_s3_tables.py.j2`, and
+    `glue_job_glue_catalog.py.j2` / `glue_job_jdbc_source.py.j2` when their
+    selects succeed — both of those sit in a `try` that logs and skips when the
+    target table does not exist yet, so on a first run they may not have.
+    `glue_job_jdbc.py.j2` and `glue_job_s3_parquet.py.j2` have no select block at
+    all, so the frame is whatever the transform produced. In every one of those
+    cases the key is "the columns being written", and that is what an operator
+    who left the column list empty asked for.
+
+    REQUIRED CONTEXT VARIABLE: `quality_config`, assigned unconditionally in
+    `code_assembly.generate_code`'s `template_vars` from
+    `resolve_quality_config` (R6.5 / do-NOT 6, design C7). That function returns
+    BOTH recognised keys on every call, which is what lets the reads below be
+    plain `quality_config.dedup_enabled` / `.dedup_columns` rather than reaching
+    for the default-value filter — under StrictUndefined a dict access to an
+    absent key yields an `Undefined` whose `__bool__` raises, so the keys being
+    filled upstream is the whole mechanism. do-NOT 6 forbids that filter here for
+    the reason `_partials/_load_counts.py.j2`'s header records, and
+    `test_dq_template_vars_contract.py`'s
+    `test_the_p64_partials_read_nothing_through_default` counts its occurrences in
+    this file at zero.
+
+    THE OUTER GUARD IS `is mapping and … is true`, AND IT IS DELIBERATELY **NOT**
+    THE `is defined and` IDIOM `dqdl_rules` AND `data_quality_enabled` USE. That
+    was the first draft and it FAILED an existing test, which is worth recording
+    because the sibling partial's header reasons the hazard away:
+    `_data_quality.py.j2` says `is defined`'s two-jinja2-copies exposure was
+    "analysed and dismissed — `is defined` only consults sentinel identity for an
+    UNSET variable, and `code_assembly.generate_code` sets this one
+    unconditionally on every production render". Both halves of that are true and
+    the conclusion still does not carry here, because the render sites that omit
+    the variable are exactly the ones under test:
+    `test_dq_template_vars_contract.py`'s
+    `test_dq_block_survives_a_second_jinja2_copy_in_sys_modules` renders all five
+    templates with no `quality_config`, and with two jinja2 copies loaded
+    `Context.resolve_or_missing` hands back copy A's `missing` sentinel while the
+    compiled template tests identity against copy B's. `_MissingType` is not an
+    `Undefined`, so `is defined` answered **True**, and the attribute read behind
+    it then raised `UndefinedError: 'dedup_enabled' is undefined` — five failures,
+    on the very test that exists to catch this class of thing. Loud rather than
+    silent, so it was safe; it was still wrong.
+
+    `is mapping` consults no sentinel at all — it is an `isinstance` check against
+    `abc.Mapping`, which a `_MissingType`, an `Undefined` and a stray scalar all
+    fail — so the guard's answer is independent of how many jinja2 copies are
+    loaded. That is the property the sibling idiom lacks. It also fails CLOSED in
+    every case: unset, `None`, a scalar, or a dict without the key all disable
+    dedup, and nothing enables it by accident. `.get(...)` rather than attribute
+    access for the same reason, and it is NOT the filter do-NOT 6 forbids: that
+    filter decides by testing whether its input is an `Undefined` instance, which
+    is the identity question two jinja2 copies make unanswerable, whereas `.get`
+    is a plain method on a value `is mapping` has already established is a real
+    dict. The filter's name is deliberately not spelled anywhere in this file —
+    the fence over it is a substring count across the whole file, so a header that
+    named it would be counted as a violation of itself, which is
+    `LGR-b46a5bb-4`'s lesson and cost this very paragraph one test failure before
+    it was reworded. `_data_quality.py.j2`'s header carries the same note for the
+    same reason.
+
+    `is true` rather than plain truthiness mirrors `resolve_quality_config`'s own
+    rule that only an explicit `bool` opts in, so the string `"false"` cannot mean
+    enabled here either. Defence in depth: that resolver already normalises, and
+    the API validator already refuses, so this is the third layer and it costs one
+    word.
+
+    The loudness a `is defined`-free guard gives up is recovered upstream and
+    mechanically, by
+    `test_dq_template_vars_contract.py`'s
+    `test_every_p64_partial_variable_is_set_unconditionally_in_template_vars`,
+    which reads this partial's variable surface and fails if `quality_config` is
+    ever missing from `template_vars`, assigned inside an `if`, or routed through
+    the source_config/target_config splat.
+
+    THE COLUMN LIST IS EMITTED THROUGH `tojson`, NEVER BY INTERPOLATION — the
+    same rule `column_rename_block` follows (do-NOT 17). Every entry has already
+    passed the identifier allowlist twice, at the API boundary
+    (`pipelines_crud._validate_quality_config`, which REFUSES rather than
+    filters) and again at render time (`resolve_quality_config`'s
+    `validate_identifiers` call on the `_DEDUP_COLUMN_SINK`), so nothing hostile
+    can reach here. `tojson` is the third layer and costs nothing: it emits a
+    quoted, escaped list literal, so even a name that somehow bypassed both
+    allowlists becomes a Python string rather than syntax.
+
+    THE DROP IS BRACKETED BY ITS OWN TWO COUNTS (p64 R7.6, task 2c.4), AND THAT
+    COSTS TWO EXTRA SPARK ACTIONS. Both are paid ONLY inside this enabled arm, so
+    a pipeline that has not opted in pays nothing and the disabled arm stays at
+    zero rendered bytes. `_adi_dedup_dropped` is the local the number travels in;
+    `_partials/_load_counts.py.j2` reads it and puts it on the
+    `(run_id, "load_metrics")` state row as `rows_deduplicated`.
+
+    TWO, not one, and NEITHER existing count can be reused — which is worth
+    stating because "reuse a count" is the obvious first idea and it is wrong on
+    both sides:
+
+      * `source_count` is PRE-TRANSFORM. The transform sits between it and this
+        block, so `source_count - <post-drop>` folds transform drops into the
+        dedup number.
+      * `transformed_count` is POST-QUARANTINE, not post-dedup. The DQ 'evaluate'
+        stage reassigns the frame — `df_transformed = _dq_passed_df` in
+        `_partials/_data_quality.py.j2` — and that site sits between this block
+        and `transformed_count`. So `<pre-drop> - transformed_count` folds
+        QUARANTINE drops into the dedup number, which is R7.6's own defect with
+        the labels swapped: the requirement exists because
+        `rows_read - rows_written` "would attribute deduplication to quarantine or
+        to the transform", and that formulation would attribute quarantine to
+        deduplication instead. Trading one misattribution for its mirror image is
+        not a saving.
+
+    So the honest bracket is a count immediately before the drop and a count
+    immediately after it, both here, where nothing else can get between them.
+    The subtraction is left unwrapped: `count()` returns a Python `int`, and the
+    explicit `int(...)` that `LGR-9d1c0e4-1` requires belongs at the DynamoDB
+    value site, which is in `_load_counts.py.j2` — the same division that partial
+    already applies to `source_count`.
+
+    NO STAGE VARIABLE. `_data_quality.py.j2` and `_load_counts.py.j2` take one
+    because they have several ordered emission points that read each other's
+    locals; this partial has exactly one, so a stage argument would be ceremony
+    with a second failure mode. `_runtime_args.py.j2` and the four `_write_*`
+    partials are the existing single-purpose precedent in this directory.
+
+    ALL of the rationale lives in this Jinja comment and none of it in the
+    emitted Python, per `LGR-b46a5bb-4` (template / ratified): this repo's
+    template fences are substring assertions over the RENDERED output, so naming
+    a fenced token in emitted Python would be counted as an occurrence of it.
+-#}
+{%- if quality_config is mapping and quality_config.get("dedup_enabled") is true %}
+
+    # === Deduplication (p64 R7.1/R7.2) ===
+    # p64 R7.6: bracket the drop with its own counts so the rows it removes are
+    # attributed to deduplication and not to the transform or the quarantine.
+    # Two extra Spark actions, paid only by a pipeline that opted in.
+    _adi_dedup_rows_before = df_transformed.count()
+{% if quality_config.get("dedup_columns") %}    df_transformed = df_transformed.dropDuplicates({{ quality_config.get("dedup_columns") | tojson }})
+{%- else %}    df_transformed = df_transformed.dropDuplicates()
+{%- endif %}
+    _adi_dedup_dropped = _adi_dedup_rows_before - df_transformed.count()
+    logger.info(f"Deduplication dropped {_adi_dedup_dropped} duplicate rows")
+    # === End Deduplication ===
+{%- endif -%}

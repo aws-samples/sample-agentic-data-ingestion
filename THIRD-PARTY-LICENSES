@@ -1,0 +1,193 @@
+Third-party licenses
+====================
+
+This file covers third-party material distributed as part of this repository.
+
+Scope note: this file exists because this repository VENDORS third-party source
+code (see "1. Vendored source" below). Declared dependencies are fetched from
+public package indexes at install time and are not redistributed here; their
+licenses are summarised in section 2 for convenience only.
+
+Every figure in section 2 was read from a lockfile or from installed package
+metadata, never inferred from a package's reputation. Each subsection names the
+command that reproduces it.
+
+
+1. Vendored source
+------------------
+
+AWS DataProcessing MCP Server
+  Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+  Upstream : https://github.com/awslabs/mcp (src/aws-dataprocessing-mcp-server)
+  Version  : 0.1.16 (upstream commit 57d7d67b0b51f57475321e111f7d76677740319f;
+             code-identical to 0.1.15)
+  Path     : mcp/vendor/awslabs_aws_dataprocessing_mcp_server/
+  License  : Apache License, Version 2.0
+  Full text: mcp/vendor/awslabs_aws_dataprocessing_mcp_server/LICENSE
+
+  Modified relative to upstream: 13 files changed and 1 added, each carrying a
+  notice that says so, plus formatting-only changes across the whole tree.
+  mcp/vendor/awslabs_aws_dataprocessing_mcp_server/PROVENANCE.md lists every
+  change and how the upstream base was identified. Per-file Apache-2.0 headers
+  are retained.
+
+  An earlier revision of this entry gave the version as 0.1.0, which was never
+  published upstream.
+
+  See also NOTICE, which reproduces the upstream NOTICE.
+
+Amazon S3 Tables Catalog for Apache Iceberg (binary, shaded)
+
+  Version  : 0.1.5
+  Path     : deploy-cdk/glue-jars/s3-tables-catalog-for-iceberg-runtime-0.1.5.jar
+  License  : Apache License, Version 2.0
+  Full text: META-INF/LICENSE.txt inside the archive
+
+  Unmodified. Redistributed as the upstream binary, byte for byte.
+
+  A redistributed BINARY, which is why it belongs in this section rather than in
+  section 2. Section 2 covers dependencies fetched from a package index at
+  install time and therefore not redistributed; this archive is committed to the
+  repository and ships with it. It is 28 MB, roughly half the tracked size of the
+  project, and it is required rather than incidental: a Glue job writing to S3
+  Tables needs the Iceberg catalog implementation on the Spark classpath.
+  deploy-cdk/lib/compute-stack.ts:1538 uploads the directory to the dependencies
+  bucket, and both compute-stack.ts:818 and agentcore-stack.ts:236 hand the
+  resulting S3 URI to jobs as S3_TABLES_JAR_PATH.
+
+  IT IS A SHADED UBER-JAR, so redistributing it redistributes its dependencies
+  too. What it bundles, read from the archive on 2026-10-02:
+
+    * 44 Maven artifacts that carry pom metadata (META-INF/maven/*):
+        - 35 AWS SDK for Java v2 modules (software.amazon.awssdk), Apache-2.0
+        - software.amazon.eventstream:eventstream 1.0.1, Apache-2.0
+        - commons-configuration2 2.11.0, commons-text 1.12.0,
+          commons-lang3 3.14.0, commons-compress 1.22, commons-codec 1.17.1,
+          commons-logging 1.3.2, httpclient 4.5.13, httpcore 4.4.16,
+          all Apache-2.0
+    * Two shaded libraries with no pom metadata in the archive:
+        - jackson-core, inside the AWS SDK's third-party package. It carries
+          FastDoubleParser (MIT, with portions under Apache-2.0) and bigint
+          (BSD-2-Clause); META-INF/FastDoubleParser-NOTICE,
+          FastDoubleParser-LICENSE and bigint-LICENSE cover them.
+        - reactive-streams (MIT-0 upstream; the archive carries no licence
+          file for it).
+
+  Attribution travels inside the archive: META-INF/LICENSE and LICENSE.txt
+  (Apache-2.0), META-INF/NOTICE (Apache HttpClient), META-INF/NOTICE.txt
+  (Apache Commons Configuration), the FastDoubleParser and bigint files above,
+  and META-INF/THIRD-PARTY, which holds a single entry for Apache Iceberg (Spark
+  runtime 1.5.x) with Iceberg's own attribution notes. Reproduce with:
+
+    unzip -l deploy-cdk/glue-jars/s3-tables-catalog-for-iceberg-runtime-0.1.5.jar \
+      | grep -E 'META-INF/(maven/.*/pom.properties|.*(LICENSE|NOTICE|THIRD-PARTY))'
+
+  An earlier revision of this entry said META-INF/THIRD-PARTY "enumerates 148
+  bundled artifacts". It does not: it is 344 lines covering one component, and
+  the bundled set is the one listed above. The NOTICE file at the top of this
+  repository now lists this JAR as well.
+
+  This entry was added in p68, and its absence until then was a gap in the thing
+  this document exists for: the scope note above already said the file covers
+  vendored third-party material, while the largest vendored artifact in the tree
+  went unlisted. The internal-reference scanner could not have caught it, because
+  it runs `grep -I` and never reads a binary.
+
+
+2. Declared dependencies
+------------------------
+
+2.1 npm (verified)
+
+    Read from the "license" field of the resolved entries in each
+    package-lock.json. 34 direct dependencies across three manifests (root,
+    deploy-cdk/, dashboard-react/); every direct dependency records a license.
+
+      Direct dependencies      : MIT 18, Apache-2.0 16
+      Full resolved closure    : 531 unique packages
+        MIT                    375
+        Apache-2.0             128
+        ISC                     13
+        BSD-3-Clause             8
+        BSD-2-Clause             2
+        (MIT OR GPL-3.0-or-later) 1   -- see note (a)
+        BlueOak-1.0.0            1   -- see note (b)
+        0BSD                     1
+        MIT-0                    1
+        CC-BY-4.0                1   -- see note (c)
+
+    (a) case@1.6.3 is dual-licensed; the MIT option is elected. It is a bundled
+        dependency shipped inside the Apache-2.0 aws-cdk-lib artifact rather
+        than a separately installed package.
+    (b) minimatch@10.2.5, Blue Oak Model License 1.0.0. Permissive. Also
+        bundled inside aws-cdk-lib.
+    (c) caniuse-lite, a build-time data package under CC-BY-4.0. Development
+        dependency; not redistributed.
+
+    All npm dependencies resolve from registry.npmjs.org. No git URLs, no local
+    paths, no private registries.
+
+2.2 Python (verified against resolved environments)
+
+    License metadata is NOT recoverable from the manifests: uv.lock records no
+    license field for any entry, and the runtime set has no lockfile. It was
+    therefore read from installed package metadata (PEP 566 `License`, PEP 639
+    `License-Expression`, and `License ::` classifiers) in two resolved
+    environments. Reproduce with:
+
+      # dev toolchain
+      uv sync
+      .venv/bin/python -c "from importlib.metadata import distributions; \
+        print(sorted((d.metadata['Name'], d.metadata.get('License-Expression') \
+        or d.metadata.get('License')) for d in distributions()))"
+
+      # runtime set, as actually installed into a container image
+      docker build -f agentcore/cost_optimization_agent/Dockerfile -t adi-lic .
+      docker run --rm adi-lic python -c "<same snippet>"
+
+    Dev toolchain — 111 distributions, every one licensed, 0 unknown:
+
+      MIT 50 · Apache-2.0 14 · BSD-3-Clause 14 · MIT License 7 · BSD 3
+      Apache License 2.0 3 · Apache 2.0 3 · BSD-2-Clause 3 · MPL-2.0 2
+      MIT license 2 · Modified BSD License 2 · MIT-0 1 · BSD License 1
+      Apache-2.0 OR BSD-3-Clause 1 · Apache-2.0 OR BSD-2-Clause 1
+      Mozilla Public License 2.0 1 · Dual License 1 · PSF-2.0 1
+      Apache-2.0 AND CNRI-Python 1
+
+    Runtime set — 142 distributions, every one licensed:
+
+      Apache-2.0 76 · MIT 29 · BSD-3-Clause 13 · MIT License 4 · PSF-2.0 2
+      Apache 2.0 2 · BSD 2 · Apache License 2.0 2 · BSD-2-Clause 2
+      Apache-2.0 AND MIT 1 · MPL-2.0 1 · MIT-0 1 · MIT-CMU 1
+      Apache-2.0 OR BSD-3-Clause 1 · Apache-2.0 OR BSD-2-Clause 1
+      BSD License 1 · 3-Clause BSD License 1 · Dual License 1 · UNKNOWN 1
+
+    Everything else is permissive. The five entries that are not plainly so,
+    resolved individually:
+
+    (d) certifi — MPL-2.0. Weak, FILE-level copyleft, and the only MPL package
+        in the runtime set. It ships a CA certificate bundle, is consumed
+        unmodified as a declared dependency, and is not vendored, so MPL-2.0
+        §3.2 reciprocity attaches to certifi's own files and reaches no project
+        code. Present transitively via requests/botocore.
+    (e) hypothesis, pathspec — MPL-2.0, both DEVELOPMENT-only (property testing
+        and path matching for linters). Neither is imported by any deployed
+        artifact.
+    (f) python-dateutil — the `License` field reads "Dual License"; the
+        classifiers resolve it to BSD-3-Clause OR Apache-2.0, either electable.
+        BSD-3-Clause is elected.
+    (g) aws-requests-auth — the `License` field literally reads "UNKNOWN", which
+        is packaging metadata sloppiness rather than an unlicensed package: its
+        classifier is `License :: OSI Approved :: BSD License`. Read as BSD.
+    (h) One dev entry is `Apache-2.0 AND CNRI-Python` (the CPython stdlib
+        heritage licence) and one runtime entry is `MIT-CMU`. Both permissive.
+
+    No GPL, AGPL, LGPL, SSPL, EPL or CDDL in either environment.
+
+    All Python dependencies resolve from pypi.org. No git URLs, no local paths,
+    no editable installs, no private registries.
+
+    Caveat on method: this reads each package's own declared metadata, which is
+    sound for a first-pass audit but is metadata, not the LICENSE file text. If
+    counsel needs file-level proof, the installed `*.dist-info/LICENSE*` files
+    must be diffed against these strings.

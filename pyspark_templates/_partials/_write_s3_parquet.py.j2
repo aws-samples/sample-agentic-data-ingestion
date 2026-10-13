@@ -1,0 +1,18 @@
+{# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+   SPDX-License-Identifier: MIT-0 #}    # Write to S3 as Parquet
+    logger.info(f"Writing to S3 path: {output_path}")
+{% if write_mode == 'append' %}
+{% if partition_columns %}
+    df_transformed.write.mode("append").partitionBy({{ partition_columns }}).parquet(output_path)
+{% else %}
+    df_transformed.write.mode("append").parquet(output_path)
+{% endif %}
+{% else %}
+{% if partition_columns %}
+    df_transformed.write.mode("overwrite").partitionBy({{ partition_columns }}).parquet(output_path)
+{% else %}
+    df_transformed.write.mode("overwrite").parquet(output_path)
+{% endif %}
+{% endif %}
+
+    logger.info(f"Write to S3 Parquet complete ({transformed_count} records)")

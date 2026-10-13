@@ -1,0 +1,59 @@
+{
+  "executions": [
+    {
+      "run_id": "exec-run-001",
+      "pipeline_key": "pipeline-abc123",
+      "status": "succeeded",
+      "started_at": "2024-01-15T10:35:00Z",
+      "completed_at": "2024-01-15T10:42:00Z",
+      "schema_version": 1,
+      "pending_approval_id": null,
+      "steps": [
+        {
+          "step_name": "file_validation",
+          "status": "succeeded",
+          "started_at": "2024-01-15T10:35:00Z",
+          "completed_at": "2024-01-15T10:35:30Z",
+          "duration_ms": 30000
+        },
+        {
+          "step_name": "schema_extraction",
+          "status": "succeeded",
+          "started_at": "2024-01-15T10:35:30Z",
+          "completed_at": "2024-01-15T10:36:00Z",
+          "duration_ms": 30000
+        }
+      ],
+      "steps_status": {
+        "file_validation": "succeeded",
+        "schema_extraction": "succeeded",
+        "schema_comparison": "succeeded",
+        "schema_mapping": "succeeded",
+        "code_generation": "succeeded",
+        "code_testing": "succeeded",
+        "infrastructure_creation": "succeeded",
+        "pipeline_execution": "succeeded",
+        "job_completion": "succeeded"
+      }
+    },
+    {
+      "run_id": "exec-run-002",
+      "pipeline_key": "pipeline-abc123",
+      "status": "waiting_approval",
+      "started_at": "2024-01-16T09:00:00Z",
+      "schema_version": 2,
+      "pending_approval_id": "approval-xyz789",
+      "steps_status": {
+        "file_validation": "succeeded",
+        "schema_extraction": "succeeded",
+        "schema_comparison": "succeeded",
+        "schema_mapping": "waiting_approval"
+      }
+    }
+  ],
+  "total_count": 2,
+  "page": 1,
+  "page_size": 20,
+  "total_pages": 1,
+  "has_more": false
+}

@@ -1,0 +1,41 @@
+{
+  "name": "agentic-data-ingestion-cdk",
+  "version": "0.1.0",
+  "license": "MIT-0",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "synth": "cdk synth",
+    "diff": "cdk diff",
+    "deploy": "cdk deploy --all --require-approval never",
+    "deploy:foundation": "cdk deploy AgenticDataIngestion-Foundation-* --require-approval never",
+    "deploy:data": "cdk deploy AgenticDataIngestion-Data-* --require-approval never",
+    "deploy:compute": "cdk deploy AgenticDataIngestion-Compute-* --require-approval never",
+    "deploy:orchestration": "cdk deploy AgenticDataIngestion-Orchestration-* --require-approval never",
+    "deploy:agentcore": "cdk deploy AgenticDataIngestion-AgentCore-* --require-approval never",
+    "destroy": "cdk destroy --all --force",
+    "test": "vitest run",
+    "test:integration": "vitest run test/integration.test.ts"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.273.0",
+    "constructs": "^10.4.0"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-cloudformation": "^3.995.0",
+    "@aws-sdk/client-dynamodb": "^3.995.0",
+    "@aws-sdk/client-lambda": "^3.995.0",
+    "@aws-sdk/client-s3": "^3.995.0",
+    "@aws-sdk/client-sfn": "^3.995.0",
+    "@types/node": "^22.0.0",
+    "aws-cdk": "^2.1130.0",
+    "cdk-nag": "^3.0.1",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.6.0",
+    "vite": "^6.4.3",
+    "vitest": "^4.1.11"
+  }
+}

@@ -1,0 +1,6 @@
+customer_id,first_name,last_name,email,phone,registration_date,status
+3001,Christopher,Lee,chris.lee@email.com,555-0301,2024-03-01,active
+3002,Michelle,White,michelle.w@email.com,555-0302,2024-03-02,active
+3003,Daniel,Harris,d.harris@email.com,555-0303,2024-03-03,inactive
+3004,Jessica,Clark,jessica.clark@email.com,555-0304,2024-03-04,active
+3005,Matthew,Lewis,m.lewis@email.com,555-0305,2024-03-05,pending

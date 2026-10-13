@@ -1,0 +1,20 @@
+[
+  {
+    "database_name": "analytics_db",
+    "description": "Main analytics database for processed customer data",
+    "location_uri": "s3://agentic-data-ingestion-analytics/databases/analytics_db/",
+    "create_time": "2024-01-10T08:00:00Z"
+  },
+  {
+    "database_name": "staging_db",
+    "description": "Staging database for data validation",
+    "location_uri": "s3://agentic-data-ingestion-staging/databases/staging_db/",
+    "create_time": "2024-01-12T10:00:00Z"
+  },
+  {
+    "database_name": "raw_db",
+    "description": "Raw ingestion database",
+    "location_uri": "s3://agentic-data-ingestion-raw/databases/raw_db/",
+    "create_time": "2024-01-08T14:00:00Z"
+  }
+]

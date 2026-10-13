@@ -1,0 +1,6 @@
+id,full_name,contact_email,mobile,created_at,is_active
+7001,Sophie Turner,sophie.turner@email.com,555-0701,2024-06-01T10:30:00Z,true
+7002,James Wright,james.w@email.com,555-0702,2024-06-02T11:45:00Z,true
+7003,Olivia King,olivia.king@email.com,555-0703,2024-06-03T09:15:00Z,false
+7004,Ethan Scott,ethan.s@email.com,555-0704,2024-06-04T14:20:00Z,true
+7005,Mia Green,mia.green@email.com,555-0705,2024-06-05T16:00:00Z,true

@@ -1,0 +1,68 @@
+{# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+   SPDX-License-Identifier: MIT-0 #}    # Write to Iceberg table via S3 Tables
+    logger.info(f"Writing to Iceberg table: {target_table}")
+{% if write_mode == 'merge' %}
+    # Resolve the --{{ key_prefix | default("") }}merge_key job argument via the R19.9
+    # optional-argument mechanism, falling back to the validated template
+    # value. The former args-dict read could NEVER see the argument (not in
+    # the top-level getResolvedOptions list), so the configured key was
+    # silently ignored and every MERGE ran on 'id' (caught live in task 17.2).
+    merge_key = _runtime_arg("{{ key_prefix | default("") }}merge_key", "{{ merge_key }}")
+    # P28 R12: merge_key is f-string'd into the MERGE INTO statement below.
+    # Enforce the identifier allowlist at the SQL sink itself — a hostile
+    # --{{ key_prefix | default("") }}merge_key job argument must fail the job, never become SQL.
+    import re as _re
+    if len(merge_key) > 255 or not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", merge_key):
+        raise ValueError(f"Invalid merge_key identifier for MERGE INTO: {merge_key!r}")
+    try:
+        spark.read.table(target_table)
+        df_transformed.createOrReplaceTempView("source_data")
+        spark.sql(f"""
+            MERGE INTO {target_table} t
+            USING source_data s
+            ON t.{merge_key} = s.{merge_key}
+            WHEN MATCHED THEN UPDATE SET *
+            WHEN NOT MATCHED THEN INSERT *
+        """)
+    except Exception as _merge_err:
+        if "TABLE_OR_VIEW_NOT_FOUND" in str(_merge_err):
+            logger.info("Table not yet in Spark catalog — creating with initial write")
+            df_transformed.writeTo(target_table).using("iceberg").createOrReplace()
+        else:
+            raise
+{% elif write_mode == 'append' %}
+    try:
+{% if partition_columns %}
+        df_transformed.writeTo(target_table).using("iceberg").partitionedBy({{ partition_columns }}).append()
+{% else %}
+        df_transformed.writeTo(target_table).using("iceberg").append()
+{% endif %}
+    except Exception as _append_err:
+        if "TABLE_OR_VIEW_NOT_FOUND" in str(_append_err):
+            logger.info("Table not yet in Spark catalog — creating with initial write")
+{% if partition_columns %}
+            df_transformed.writeTo(target_table).using("iceberg").partitionedBy({{ partition_columns }}).createOrReplace()
+{% else %}
+            df_transformed.writeTo(target_table).using("iceberg").createOrReplace()
+{% endif %}
+        else:
+            raise
+{% else %}
+{% if partition_columns %}
+    df_transformed.writeTo(target_table).using("iceberg").partitionedBy({{ partition_columns }}).createOrReplace()
+{% else %}
+    df_transformed.writeTo(target_table).using("iceberg").createOrReplace()
+{% endif %}
+{% endif %}
+
+    logger.info("Write complete")
+
+    # Record count reconciliation
+    try:
+        output_count = spark.read.table(target_table).count()
+        if output_count != transformed_count:
+            logger.warning(f"Record count mismatch: transformed={transformed_count}, written={output_count}")
+        else:
+            logger.info(f"Record count verified: {output_count}")
+    except Exception:
+        pass

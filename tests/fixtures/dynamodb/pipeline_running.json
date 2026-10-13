@@ -1,0 +1,26 @@
+{
+  "pipeline_key": "pipeline-abc123",
+  "pipeline_name": "Customer Data Ingestion",
+  "status": "running",
+  "source_schema": "{\"fields\": [{\"field_name\": \"id\", \"field_type\": \"integer\"}, {\"field_name\": \"name\", \"field_type\": \"string\"}]}",
+  "target_schema": "{\"fields\": [{\"field_name\": \"id\", \"field_type\": \"integer\"}, {\"field_name\": \"name\", \"field_type\": \"string\"}]}",
+  "created_at": "2024-01-15T10:30:00Z",
+  "updated_at": "2024-01-15T10:35:00Z",
+  "model_id": "anthropic.claude-3-sonnet",
+  "target_type": "s3_tables",
+  "schema_version": 1,
+  "mapping_count": 2,
+  "has_mapping": true,
+  "file_count": 1,
+  "target_config": {
+    "type": "NEW_S3_TABLE_BUCKET",
+    "bucket_name": "agentic-data-ingestion-target-bucket",
+    "table_name": "customers",
+    "write_mode": "append"
+  },
+  "approval_config": {
+    "schema_mapping_enabled": true,
+    "code_generation_enabled": true
+  },
+  "current_execution_id": "exec-run-001"
+}

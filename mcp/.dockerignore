@@ -1,0 +1,19 @@
+# Build context for the four dataprocessing-based MCP server images is this
+# mcp/ directory (agentcore-stack.ts), so this .dockerignore governs what is
+# uploaded to the Docker daemon for those builds.
+#
+# The four Dockerfiles COPY <server>/requirements.txt, <server>/server.py and
+# vendor/awslabs_aws_dataprocessing_mcp_server/awslabs/ — nothing else. Entries
+# below are either not COPY'd or locally generated; a locally generated file in
+# the context changes the asset hash on every synth.
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.venv
+**/.DS_Store
+**/README.md
+**/pyproject.toml
+**/test_*.py

@@ -1,0 +1,693 @@
+{#- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    SPDX-License-Identifier: MIT-0 -#}
+{#- pyspark_templates/glue_job_jdbc_source.py.j2 — JDBC source template -#}
+{#-
+   Reads from a JDBC source (Postgres / MySQL / MariaDB / Oracle / SQL Server),
+   applies the AI-generated transform_block, and dispatches to a per-target
+   write partial. Mirrors the four S3_UPLOAD-source templates in structure;
+   differences:
+
+     * Reader is `spark.read.format("jdbc")` with `dbtable` (full_table mode)
+       or `query` (incremental mode).
+     * Credentials (source, and a JDBC/RDS target) come from Secrets Manager at runtime via boto3.
+     * Identifiers and watermark values are validated at runtime via the
+       `jdbc_helpers` shared module as defence-in-depth (Req 7.5).
+     * `getResolvedOptions` keys list is built per render via Jinja2
+       conditionals — `getResolvedOptions` requires every declared key to be
+       present in `sys.argv`, so we conditionally include incremental-only
+       and target-specific keys (Req 8.3).
+
+   Variables (all set at Jinja render time):
+     * engine            — JDBC engine name (e.g. "postgres"), used at
+                           render time for per-engine identifier quoting and
+                           watermark predicate construction. NOT a runtime arg.
+     * target_type       — Uppercase target type literal (e.g. "S3_TABLES").
+     * read_mode         — "full_table" or "incremental".
+     * initial_watermark — Optional first-run lower bound (Req 7.4). Bound by
+                           `code_assembly` from the record's
+                           `watermark_initial_value` through
+                           `jdbc_helpers.initial_watermark_entry`.
+     * write_mode        — "overwrite" / "append" / "merge" (target-dependent).
+     * partition_columns — Optional list of partition columns for partitioned
+                           writes (S3_TABLES, S3_PARQUET, GLUE_CATALOG).
+     * merge_key         — Merge key for S3_TABLES MERGE INTO writes.
+     * transform_block   — AI-generated PySpark transform code (input `df`,
+                           output `df_transformed`).
+     * dqdl_rules        — Optional Glue Data Quality DQDL rules. CORRECTED BY
+                           p64 R6.1: this entry used to say "rendered as a
+                           passthrough — JDBC source does not run inline DQ in
+                           V1", which is no longer true. The rules are now
+                           evaluated inline through
+                           `_partials/_data_quality.py.j2`, with the row-level
+                           Passed/Failed split and the quarantine write, on the
+                           same terms as the four S3_UPLOAD-source templates.
+                           An empty or absent ruleset still renders only the
+                           banner, so a pipeline with no rules is unaffected.
+     * quarantine_bucket — Bucket the DQ block writes failing rows to, as
+                           s3://<bucket>/quarantine/<run_id>/. Read only when
+                           `dqdl_rules` is non-empty; a non-empty ruleset with
+                           no bucket raises at runtime rather than dropping
+                           rows (p64 R6.4).
+-#}
+{%- set target_type = (target_type | default('UNKNOWN')) | upper %}
+{%- set read_mode = read_mode | default('full_table') %}
+{%- set write_mode = write_mode | default('append') %}
+{%- set merge_key = merge_key | default('id') %}
+{%- set initial_watermark = initial_watermark | default('') %}
+import sys
+import json
+import logging
+from datetime import datetime, timezone
+
+import boto3
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.job import Job
+from pyspark.sql.functions import col, lit, trim, lower, to_date, to_timestamp, when, concat_ws, count as spark_count, regexp_replace, upper, initcap, substring, coalesce, length, split, array_contains, expr, max as spark_max
+from pyspark.sql.types import StringType, IntegerType, LongType, DoubleType, BooleanType, DateType, TimestampType
+{% if target_type == 'GLUE_CATALOG' %}
+from awsglue.dynamicframe import DynamicFrame
+{% endif %}
+
+# `jdbc_helpers` is shipped to the Glue Job classpath via `--extra-py-files`
+# (the same shared module that powers wizard-time validation in the
+# dashboard API Lambda). Re-validating identifiers and watermark values at
+# job runtime is mandatory defence-in-depth (Req 7.5) because Spark JDBC
+# does NOT support `?` bind parameters on the `query` option.
+from jdbc_helpers import (
+    validate_identifier,
+    validate_watermark_value,
+    quote_identifier,
+    build_watermark_predicate,
+)
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+# `getResolvedOptions` requires every declared key to be present in
+# `sys.argv`. The keys list is built per render so that incremental-only
+# and target-specific keys are only declared when applicable (Req 8.3).
+args = getResolvedOptions(sys.argv, [
+    'JOB_NAME',
+    'jdbc_url',
+    'jdbc_driver',
+    'jdbc_schema',
+    'jdbc_table',
+    'secret_arn',
+    'read_mode',
+    'pipeline_id',
+    'run_id',
+{% if read_mode == 'incremental' %}
+    'watermark_column',
+    'watermark_type',
+    'watermarks_table_name',
+{% endif %}
+{% if target_type == 'S3_TABLES' %}
+    'target_table_bucket_arn',
+    'target_namespace',
+    'target_table_name',
+    'target_warehouse_location',
+{% elif target_type == 'GLUE_CATALOG' %}
+    'target_database_name',
+    'target_table_name',
+{% elif target_type in ('JDBC', 'RDS_DATABASE') %}
+    'target_jdbc_url',
+    'target_jdbc_driver',
+    'target_jdbc_table',
+{#- JDBC target credential: ALWAYS the Secrets Manager reference, one key. The
+    plaintext target_jdbc_user / target_jdbc_password arm that used to sit here,
+    chosen when no target_secret_arn was rendered, is deleted (LGR-819980f-1,
+    standing invariant; it is what leaked a target credential). build_jdbc_arguments
+    emits --target_secret_arn for every JDBC target, so declaration and emission
+    agree by construction rather than by a render variable both sides must match. #}
+    'target_secret_arn',
+{% elif target_type == 'S3_PARQUET' %}
+    'target_output_path',
+{% endif %}
+])
+sc = SparkContext()
+glue_context = GlueContext(sc)
+spark = glue_context.spark_session
+job = Job(glue_context)
+job.init(args['JOB_NAME'], args)
+
+{% include "_partials/_runtime_args.py.j2" %}
+
+{% if target_type == 'S3_TABLES' %}
+# Configure Iceberg catalog for S3 Tables (target)
+spark.conf.set("spark.sql.catalog.s3tablesbucket", "org.apache.iceberg.spark.SparkCatalog")
+spark.conf.set("spark.sql.catalog.s3tablesbucket.catalog-impl", "software.amazon.s3tables.iceberg.S3TablesCatalog")
+spark.conf.set("spark.sql.catalog.s3tablesbucket.warehouse", args['target_table_bucket_arn'])
+
+target_table = f"s3tablesbucket.{args['target_namespace']}.{args['target_table_name']}"
+
+# Cache target schema once (reused for auto-cast, column selection)
+_target_schema = None
+try:
+    _target_schema = spark.read.table(target_table).schema
+    logger.info(f"Target table schema loaded: {len(_target_schema)} fields")
+except Exception:
+    logger.info("Target table not yet in Spark catalog — schema will be inferred on first write")
+{% endif %}
+
+try:
+    # === SOURCE READ — fetch credentials, validate identifiers, build query ===
+    secret_payload = boto3.client("secretsmanager").get_secret_value(
+        SecretId=args['secret_arn']
+    )
+    secret = json.loads(secret_payload["SecretString"])
+    db_user = secret["username"]
+    db_password = secret["password"]
+
+    # Re-validate identifiers at runtime (defence-in-depth — Req 7.5).
+    validate_identifier(args['jdbc_schema'])
+    validate_identifier(args['jdbc_table'])
+
+    # Engine-aware identifier quoting. `engine` is baked in at Jinja2 render
+    # time — MySQL/MariaDB/Aurora-MySQL produce backticks; everything else
+    # produces double quotes.{# `engine` comes from pipeline configuration, so
+    it is rendered through `tojson`: the same quoted literal for every supported
+    engine, and a string rather than code for anything else. #}
+    _sch = quote_identifier({{ engine | tojson }}, args['jdbc_schema'])
+    _tbl = quote_identifier({{ engine | tojson }}, args['jdbc_table'])
+
+{% if read_mode == 'incremental' %}
+    validate_identifier(args['watermark_column'])
+
+    # Resolve the watermark lower bound for this run.
+    #
+    # Order of precedence (Req 7.3, 7.4):
+    #   1. The `last_value` from the Watermarks_Table for this pipeline, if
+    #      a previous run has populated one.
+    #   2. The initial watermark baked into the rendered template (set at
+    #      code generation from `source_config.watermark_initial_value`).
+    #   3. None — first run with no initial watermark configured: the WHERE
+    #      clause is omitted entirely and the full table is read.
+    _watermarks_table = boto3.resource("dynamodb").Table(args['watermarks_table_name'])
+    _wm_response = _watermarks_table.get_item(Key={'pipeline_id': args['pipeline_id']})
+    _wm_item = _wm_response.get('Item')
+    if _wm_item and _wm_item.get('last_value'):
+        prev_value = str(_wm_item['last_value'])
+    else:
+        prev_value = {{ initial_watermark | tojson }}
+
+    if prev_value:
+        validate_watermark_value(prev_value, args['watermark_type'])
+        _predicate = build_watermark_predicate(
+            {{ engine | tojson }},
+            args['watermark_column'],
+            args['watermark_type'],
+            prev_value,
+        )
+{#- A bare SELECT, never `(SELECT ...) AS alias`. Spark's `query` option wraps
+    the string itself, as `SELECT * FROM (<query>) SPARK_GEN_SUBQ_n`, so an
+    already-parenthesised, aliased subquery becomes
+    `FROM ((SELECT ...) AS subq) SPARK_GEN_SUBQ_n`, which PostgreSQL rejects as a
+    syntax error (and Oracle rejects `AS` before a table alias outright). The
+    parenthesised form is correct only for the `dbtable` option, which this read
+    does not use. Until 2026-10-10 this failed every incremental run that had a
+    lower bound, i.e. every run after the first. #}
+        _query = f"SELECT * FROM {_sch}.{_tbl} WHERE {_predicate}"
+        logger.info(f"Incremental read with watermark: {_predicate}")
+        df = spark.read.format("jdbc") \
+            .option("url", args['jdbc_url']) \
+            .option("driver", args['jdbc_driver']) \
+            .option("user", db_user) \
+            .option("password", db_password) \
+            .option("query", _query) \
+            .load()
+    else:
+        logger.info("Incremental mode but no prior watermark — reading full table for first run")
+        df = spark.read.format("jdbc") \
+            .option("url", args['jdbc_url']) \
+            .option("driver", args['jdbc_driver']) \
+            .option("user", db_user) \
+            .option("password", db_password) \
+            .option("dbtable", f"{_sch}.{_tbl}") \
+            .load()
+{% else %}
+    # Full-table read.
+    df = spark.read.format("jdbc") \
+        .option("url", args['jdbc_url']) \
+        .option("driver", args['jdbc_driver']) \
+        .option("user", db_user) \
+        .option("password", db_password) \
+        .option("dbtable", f"{_sch}.{_tbl}") \
+        .load()
+{% endif %}
+
+{% if read_mode == 'incremental' %}
+    # Cache `df` BEFORE computing MAX (Req 7.6). Without `cache()`, Spark's
+    # lazy evaluation would trigger a separate JDBC read for the MAX action
+    # AND another for the transform — doubling source-database load.
+    df = df.cache()
+
+    # Compute the new watermark from the SOURCE DataFrame `df`, NOT
+    # `df_transformed` (Req 7.6). Transforms may drop rows or rename columns;
+    # we need the max from what was actually read so the next run picks up
+    # exactly where this one left off.
+    _wm_row = df.agg(spark_max(col(args['watermark_column'])).alias("_max_wm")).collect()
+    new_watermark_value = _wm_row[0]["_max_wm"] if _wm_row else None
+{% endif %}
+
+    source_count = df.count()
+    logger.info(f"Source record count: {source_count}")
+    if source_count == 0:
+        logger.warning("Source data is empty — skipping transformation and write")
+{# p37 R1.3: position (i) — record the counts BEFORE the early exit, and
+   deliberately BEFORE the read_mode branch below so BOTH the incremental and
+   the full-table arm record. Without this site `empty_source` is
+   unrecordable: the job is gone before transformed_count exists.
+   `{% with %}` (not `{% set %}`) so an include added later without a stage
+   fails the render under StrictUndefined rather than inheriting a leaked one.
+   The block adds NO job.commit() — see the NOTE below, LGR-0450623-1. -#}
+{% with load_counts_stage = 'empty_source' -%}
+{% include "_partials/_load_counts.py.j2" %}
+{%- endwith %}
+{% if read_mode == 'incremental' %}
+        # Per Req 7.7, leave the existing watermark unchanged on empty reads.
+        df.unpersist()
+{% endif %}
+        # NOTE: do NOT call job.commit() here. `sys.exit(0)` raises
+        # SystemExit, which unwinds through the `finally:` block below —
+        # and that block already calls job.commit() exactly once. Committing
+        # here too would double-commit on the empty-data path.
+        sys.exit(0)
+
+{# p53 C1 — the bounded Sample_Artifact write. ALL of the rationale lives in
+   THIS Jinja comment and not in the emitted Python, and that is a fix rather
+   than a style choice: `LGR-b46a5bb-4` (template / ratified) records that
+   substring matching an invariant forbids documenting it, and this repo's
+   template fences are substring assertions on the RENDERED output. A Python
+   comment here naming `df.cache()`, `df.unpersist()`, `.count()`, `SELECT` or
+   `spark.read` would be counted as an occurrence of it and would break
+   tests/unit/templates/test_load_counts_render.py and
+   test_glue_job_jdbc_source.py — measured, not feared: the first draft of this
+   block did exactly that on five separate tokens. A Jinja comment never
+   reaches the output, so the fences can be named here in full. This mirrors
+   `_partials/_load_counts.py.j2`, whose own header names all three tokens for
+   the same reason.
+
+   WHY THIS SITE, AND ONLY THIS SITE. The block sits AFTER all three
+   source-read arms (`:187` / `:196` / `:205`) have converged on a single `df`
+   and after the empty-source early exit, and BEFORE the transform. One site
+   means exactly ONE put_object renders in every one of the 120
+   configurations — placing it inside the read arms would emit three. It is
+   also the first point at which `df` is guaranteed materialised: for
+   read_mode='incremental' the `df.cache()` above is warm from the MAX
+   collect, and for full-table the `df.count()` above has already run. Placing
+   it after the post-write `df.unpersist()` would force a re-read of the
+   customer's database and violate R4.1 / do-NOT 7.
+
+   NO NEW SQL AND NO NEW DATABASE READ (R4.1, R4.4, do-NOT 6, do-NOT 7). The
+   rows come off a frame this job has ALREADY read for its own purposes;
+   `.limit(100)` is a Spark bound, not a SQL one. No SELECT is constructed, no
+   identifier is interpolated, no LIMIT is composed and no second connection is
+   opened, so BC3's interpolation hazard and BC4's `\A`/`\Z` newline fence are
+   not engaged by p53 at all — they stay binding on this template's EXISTING
+   query construction, which p53 does not touch. Do NOT "improve" this into a
+   query: that changes the mechanism from (d) to (b) and re-engages all four.
+
+   NO CREDENTIAL TRAVELS HERE. `LGR-819980f-1` (standing invariant): the secret
+   ARN is the only credential reference, fetched at runtime at `:139-142`.
+   This block reads the ARN's region/account SEGMENTS and never `db_user` or
+   `db_password`.
+
+   NO df.cache(), NO df.unpersist(), NO .count(), NO .persist(). `04506234eb`
+   (raw commit body, no ledger record — cited as `LGR-0450623-1` by the tests)
+   records a reviewer's `cache()` on the FULL-TABLE path being reverted because
+   the tests document and assert that full-table mode emits neither.
+   test_load_counts_render.py:598-620 pins the exact occurrence counts of all
+   four, per read_mode.
+
+   NO NEW IAM. `create_glue_pipeline/iam_roles.py:222-232` already grants this
+   role `s3:PutObject` on `adi-processed-files-{account}-{region}/*`. Zero new
+   statements is one of mechanism (d)'s load-bearing claims, and an IAM change
+   would pull Foundation to the front of the deploy order (`LGR-b46a5bb-3`).
+   The generated job also still only ever PutItems on the state table
+   (`LGR-9e76249-3` / BC6) — this block writes no DynamoDB row.
+
+   A SINGLE OBJECT, NOT A SPARK DIRECTORY WRITE. `df.write.json(path)` emits a
+   DIRECTORY of part files plus _SUCCESS, whose URI carries no extension, and
+   test_code/glue_session_runner.py's `sample_read_format` returns None for a
+   prefix (`:2191-2193`) — the sample frame would report
+   SAMPLE_UNAVAILABLE_UNRECOGNISED_FORMAT and consumer 3 would be defeated. A
+   driver-side boto3 put_object of one `.json` object is REQUIRED, not
+   preferred.
+
+   A JSON ARRAY, NOT JSONL. Triply determined. The p49 readers have no Parquet
+   branch (`create_code/lambda_function.py:342-345` is json/csv only), so
+   Parquet is out; CSV read with inferSchema=False makes every column a string,
+   so CSV is out; and `_SAMPLE_READERS["json"]` is
+   `spark.read.option("multiLine", True).json(uri)`
+   (`glue_session_runner.py:2095`), which expects an array spanning lines and
+   NOT newline-delimited JSONL, so JSONL is out. A JSON array under a `.json`
+   key is the only intersection of all four consumers.
+
+   BOUNDED ON BYTES, NOT ONLY ON ROWS (BC10). `create_code`'s reader takes at
+   most `_MAX_SAMPLE_BYTES = 1_048_576` (`:340`) and its docstring (`:319-321`)
+   names the cost: an array larger than the ceiling "truncates to something
+   unparseable and yields {}". 100 wide rows can exceed 1 MiB, so a row cap
+   alone is insufficient. WHOLE ROWS are dropped from the end until the
+   serialised array fits; a mid-array cut would produce exactly the unparseable
+   body the ceiling exists to avoid. Fewer rows is a degraded sample; an
+   unparseable body is no sample at all.
+
+   TWO THINGS ABOUT THIS COMMENT'S OWN DELIMITERS, both found by rendering it.
+   (1) The closing tag carries no leading minus. A whitespace-stripping close
+   would eat the newline AND the four-space indent off the first emitted
+   comment line, leaving a bare hash at column 0 inside the `try:` block —
+   legal Python, but the generated script is read in the Glue console.
+   (2) Nothing in here may spell the closing delimiter, because Jinja ends the
+   comment at the FIRST occurrence of it and emits everything after as literal
+   template text. The first draft of this note quoted the delimiter to explain
+   point (1) and leaked eight lines of prose into the rendered script. #}
+    # === p53 C1: bounded source sample. At most 100 rows of the frame already
+    # read, under 1 MiB, as ONE JSON array object — the shape every downstream
+    # consumer can read. Rationale and fences: the Jinja comment on this block
+    # in pyspark_templates/glue_job_jdbc_source.py.j2.
+    #
+    # Best-effort (R1.6): a telemetry failure must NOT fail a run whose read
+    # succeeded, so the whole block is wrapped. The SUCCESS path logs at INFO
+    # too, so "no sample ever appeared" is diagnosable from this log rather
+    # than by inference (a subnet with no S3 endpoint fails it silently).
+    try:
+        # 1 MiB, the ceiling create_code's sample reader stops at.
+        _ADI_SAMPLE_MAX_BYTES = 1048576
+
+        # Account and region are neither hardcoded nor a new job argument: an
+        # ARN is arn:aws:secretsmanager:<region>:<account>:secret:name, so
+        # segments 3 and 4 of --secret_arn (already held, already used above)
+        # are what `adi-processed-files-<account>-<region>` needs. No API call,
+        # so no VPC-endpoint dependency beyond the S3 write's own.
+        _adi_smp_arn = args['secret_arn'].split(":")
+        _adi_smp_region = _adi_smp_arn[3] if len(_adi_smp_arn) > 4 else ""
+        _adi_smp_account = _adi_smp_arn[4] if len(_adi_smp_arn) > 4 else ""
+        _adi_smp_pipeline_id = args['pipeline_id']
+
+        if _adi_smp_region and _adi_smp_account and _adi_smp_pipeline_id:
+            # Deterministic key, overwritten each run. schema_extract probes
+            # exactly this location, so the key is a contract.
+            _adi_smp_bucket = f"adi-processed-files-{_adi_smp_account}-{_adi_smp_region}"
+            _adi_smp_key = f"samples/{_adi_smp_pipeline_id}/source-sample.json"
+
+            def _adi_smp_value(_v):
+                # Scalars keep their JSON type so the sample frame gets real
+                # numbers. Everything else — date, timestamp, Decimal, bytes,
+                # struct, array — becomes its string form (JSON has no
+                # timestamp type, and the date-format check WANTS the textual
+                # form). Non-finite floats become null: NaN and Infinity are
+                # not valid JSON.
+                if _v is None or isinstance(_v, (bool, int, str)):
+                    return _v
+                if isinstance(_v, float):
+                    return _v if float("-inf") < _v < float("inf") else None
+                return str(_v)
+
+            # At most 100 rows, off the frame already read. Bound first, then
+            # collect — nothing here materialises the full frame.
+            _adi_smp_rows = []
+            for _adi_smp_row in df.limit(100).collect():
+                _adi_smp_clean = {}
+                for _adi_smp_k, _adi_smp_v in _adi_smp_row.asDict(recursive=True).items():
+                    try:
+                        _adi_smp_clean[str(_adi_smp_k)] = _adi_smp_value(_adi_smp_v)
+                    except Exception:
+                        # A field that will not coerce is OMITTED, not fatal.
+                        # A partial sample is useful; a failed write is not.
+                        pass
+                _adi_smp_rows.append(_adi_smp_clean)
+
+            # Drop WHOLE rows from the end until the serialised array is under
+            # the reader's ceiling. json.dumps cannot raise here — every value
+            # is already None/bool/int/float/str.
+            _adi_smp_body = json.dumps(_adi_smp_rows)
+            while _adi_smp_rows and len(_adi_smp_body.encode("utf-8")) >= _ADI_SAMPLE_MAX_BYTES:
+                _adi_smp_rows.pop()
+                _adi_smp_body = json.dumps(_adi_smp_rows)
+            _adi_smp_payload = _adi_smp_body.encode("utf-8")
+
+            boto3.client("s3").put_object(
+                Bucket=_adi_smp_bucket,
+                Key=_adi_smp_key,
+                Body=_adi_smp_payload,
+                ContentType="application/json",
+            )
+            logger.info(
+                f"Source sample written: {len(_adi_smp_rows)} rows, "
+                f"{len(_adi_smp_payload)} bytes -> "
+                f"s3://{_adi_smp_bucket}/{_adi_smp_key}"
+            )
+        else:
+            logger.warning(
+                "Source sample not written: could not derive the sample "
+                "location from --secret_arn / --pipeline_id"
+            )
+    except Exception as _adi_smp_err:
+        logger.warning(f"Failed to write source sample: {_adi_smp_err}")
+    # === End p53 C1 ===
+
+    # === AI-Generated Transform Block ===
+    {{ transform_block | indent(4, first=False) }}
+    # === End Transform Block ===
+
+{% if target_type == 'S3_TABLES' %}
+{#- p64 R9.1/R9.3 (design C10) — the type-cast failure count, via the shared
+    partial. Second and last include site; see `glue_job_s3_tables.py.j2`'s copy of
+    this comment and the partial's own header for why BEFORE the loop is the
+    mechanism rather than a preference. This arm reads the same cached
+    `_target_schema` local, which is what lets one partial serve both. NO blank
+    line after the include here, unlike the s3_tables site — the line this sits
+    between differs, so the two sites' whitespace is NOT copy-identical. The
+    Glue Catalog arm below is deliberately not covered: its cast loop is inside a
+    `try` whose schema is read from the catalog at runtime, so there is no local to
+    read beforehand. DEFERRED AND CURRENTLY UNOWNED — recorded as design O8, which
+    also states why. NOT task 2e.2's residual: 2e.2's text is R9.2, and neither of
+    R9.2's clauses covers widening this reach. -#}
+{%- include "_partials/_cast_null_check.py.j2" %}
+    # === Auto-cast + column selection (single pass using cached schema) ===
+    if _target_schema:
+        for field in _target_schema:
+            if field.name in df_transformed.columns:
+                source_type = df_transformed.schema[field.name].dataType
+                if source_type != field.dataType:
+                    logger.info(f"Casting {field.name}: {source_type} -> {field.dataType}")
+                    if isinstance(field.dataType, DateType):
+                        df_transformed = df_transformed.withColumn(
+                            field.name,
+                            when(col(field.name).isNull(), lit(None).cast(DateType()))
+                            .otherwise(to_date(col(field.name)))
+                        )
+                    elif isinstance(field.dataType, TimestampType):
+                        df_transformed = df_transformed.withColumn(
+                            field.name,
+                            when(col(field.name).isNull(), lit(None).cast(TimestampType()))
+                            .otherwise(to_timestamp(col(field.name)))
+                        )
+                    else:
+                        df_transformed = df_transformed.withColumn(field.name, col(field.name).cast(field.dataType))
+        target_columns = [f.name for f in _target_schema if f.name in df_transformed.columns]
+        if target_columns:
+            logger.info(f"Selecting {len(target_columns)} target columns from {len(df_transformed.columns)} available")
+            df_transformed = df_transformed.select(*target_columns)
+    # === End Auto-cast + Select ===
+{% elif target_type == 'GLUE_CATALOG' %}
+    # === Auto-cast columns to match target Glue Catalog schema ===
+    try:
+        target_df = glue_context.create_dynamic_frame.from_catalog(
+            database=args['target_database_name'], table_name=args['target_table_name']
+        ).toDF()
+        if target_df.schema:
+            for field in target_df.schema:
+                if field.name in df_transformed.columns:
+                    source_type = df_transformed.schema[field.name].dataType
+                    if source_type != field.dataType:
+                        logger.info(f"Casting {field.name}: {source_type} -> {field.dataType}")
+                        df_transformed = df_transformed.withColumn(field.name, col(field.name).cast(field.dataType))
+    except Exception as _cast_err:
+        logger.info(f"Skipping auto-cast (target table may not exist yet): {_cast_err}")
+
+    try:
+        target_table_name = f"{args['target_database_name']}.{args['target_table_name']}"
+        target_columns = [f.name for f in spark.read.table(target_table_name).schema]
+        available = [c for c in target_columns if c in df_transformed.columns]
+        if available:
+            logger.info(f"Selecting {len(available)} target columns from {len(df_transformed.columns)} available")
+            df_transformed = df_transformed.select(*available)
+    except Exception as _select_err:
+        logger.info(f"Skipping column selection (target table may not exist yet): {_select_err}")
+    # === End Auto-cast + Select ===
+{% elif target_type == 'S3_PARQUET' %}
+    # Resolve output path for the S3 Parquet write partial.
+    output_path = args['target_output_path']
+{% endif %}
+{#- p64 R7.1/R7.2 (design C7) — the dedup drop, via the shared partial. ONE
+    include site, and it sits AFTER the per-target auto-cast/column selection
+    above and BEFORE the DQ 'evaluate' site below. Both halves are load-bearing:
+    after the select so a bare `dropDuplicates()` keys on the mapped target
+    columns (R7.2's default), and before the split so duplicate rows are not
+    quarantined as `Uniqueness` failures before dedup sees them, which would fold
+    the dedup drops into `rows_quarantined` and defeat R7.6. See
+    `glue_job_s3_tables.py.j2`'s copy of this comment and the partial's own header.
+
+    THIS TEMPLATE SERVES EVERY TARGET TYPE, so the select above may not have run:
+    the S3_TABLES arm is gated on `_target_schema`, the GLUE_CATALOG arm sits in a
+    `try` that logs and skips when the target table does not exist yet, and the
+    JDBC / S3_PARQUET arms have no select at all. In those cases the bare call keys
+    on the transform's own columns — still exactly the frame being written. The
+    partial's header states that limit rather than glossing it.
+
+    `LGR-819980f-1` (INVARIANT) APPLIES TO THIS INCLUDE TOO. The partial
+    interpolates exactly ONE render variable, `quality_config`, whose only members
+    are `dedup_enabled` (a bool) and `dedup_columns` (identifier-allowlisted column
+    names), and it adds NOTHING to the per-render `getResolvedOptions` key list
+    above. So no credential reaches a Glue job argument, a rendered string or a log
+    line. Keep it that way: a dedup key is a column name, never a connection
+    detail. -#}
+{%- include "_partials/_dedup.py.j2" %}
+
+{# p64 R6.1/R6.2 (design C6) — inline Glue Data Quality, via the shared
+   partial rather than a fifth copy of it. THIS TEMPLATE'S BEHAVIOUR CHANGED
+   HERE: the header's variable list used to say `dqdl_rules` was "rendered as a
+   passthrough — JDBC source does not run inline DQ in V1", and it no longer is.
+   R6.1 requires the mechanism on all five templates, because R7 (dedup) and R8
+   (non-printable characters) build on it and would otherwise cover one target
+   type of four. The header entry has been corrected in the same change.
+
+   TWO include sites, and the order is load-bearing: 'evaluate' must follow the
+   transform and the per-target auto-cast/column selection above (it evaluates
+   the rules against the frame that will actually be written, and rebinds
+   df_transformed to the Passed rows), and 'report' must follow
+   `transformed_count` because the counter it publishes as `rows_passed` IS
+   `transformed_count`. See the partial's header for the fence on the quarantine
+   write and for why its indentation is literal.
+
+   `LGR-819980f-1` (INVARIANT) ON THIS TEMPLATE IN PARTICULAR. This is the JDBC
+   *source* template: it resolves credentials from Secrets Manager at runtime,
+   by ARN, and its `getResolvedOptions` key list above is built per render. The
+   partial interpolates exactly two render variables — `dqdl_rules` and
+   `quarantine_bucket` — and adds NOTHING to that key list, so no credential
+   reaches a Glue job argument, a rendered string, a log line or the quarantine
+   path. Keep it that way: the quarantine path is
+   s3://{quarantine_bucket}/quarantine/{run_id}/ and must never gain a
+   connection detail for "traceability".
+
+   KNOWN RESIDUAL, RECORDED RATHER THAN SILENTLY CARRIED (p64 2b.2). The
+   quarantine write needs `s3:PutObject` on the quarantine bucket
+   (adi-generated-code-*), and the per-pipeline Glue execution role grants that
+   per TARGET type, not per source: `create_glue_pipeline/iam_roles.py:167`
+   (S3_TABLES variants + GLUE_CATALOG) grants Put/Delete at :223-226, while
+   `elif target_type == "JDBC"` (:305, at :375-377) and
+   `elif target_type in ["S3_PARQUET", "S3", "S3_BUCKET"]` (:422, at :439-441)
+   grant `s3:GetObject` only. So this template quarantines successfully for
+   target_type S3_TABLES and GLUE_CATALOG and fails with AccessDenied for JDBC
+   and S3_PARQUET, when a non-empty ruleset actually produces failing rows. That
+   is fail-closed rather than row-losing (the write is deliberately outside the
+   non-blocking try, R6.3), so it is safe but wrong.
+
+   STATUS AFTER 2c.1: CLOSED for all four combinations. The residual above is
+   historical, kept for the reason it names. 2b.4 first made it UNREACHABLE by
+   gating this block on `data_quality_enabled`, which defaults to OFF for this
+   template — a JDBC source routes here for EVERY target type, and none of them had
+   a DQ block before p64 — and withheld the grant deliberately (`LGR-9e76249-3`,
+   `LGR-b46a5bb-2`). 2c.1 made the opt-in settable at the API and added the grant in
+   the same change. The exposure here was WIDER than on the other two templates,
+   because this one template serves all five targets, so opting in a JDBC-source
+   pipeline needed the grant on the JDBC *and* S3_PARQUET target branches — 2c.1
+   added it to both, so all four AccessDenied combinations are closed together.
+   See glue_job_jdbc.py.j2's copy of this note for why each is a separate policy
+   statement and must not be merged into the existing GetObject grant. -#}
+{% with data_quality_stage = 'evaluate' -%}
+{% include "_partials/_data_quality.py.j2" %}
+{%- endwith %}
+{#- p64 R8.1/R8.2 (task 2d.2) — the non-printable character check, via the shared
+    partial. ONE include site, and it sits HERE deliberately: AFTER the DQ
+    'evaluate' site above, because that stage rebinds df_transformed to the Passed
+    split, so counting earlier would count rows that are about to be quarantined
+    and never written; and BEFORE `transformed_count` below, because the local it
+    leaves behind (`_adi_np_rows`) is read by the DQ 'report' stage further down.
+    The check FLAGS — it diverts no rows and adds nothing to rows_quarantined — and
+    its disabled arm costs zero rendered bytes. The partial's header carries the
+    full argument, the character class, and the pairing rule between its guard and
+    the report stage's. -#}
+{%- include "_partials/_nonprintable_check.py.j2" %}
+
+    transformed_count = df_transformed.count()
+    logger.info(f"Transformed record count: {transformed_count} (filtered {source_count - transformed_count} records)")
+{% with data_quality_stage = 'report' -%}
+{% include "_partials/_data_quality.py.j2" %}
+{%- endwith %}
+{% if target_type == 'S3_TABLES' %}
+{% with key_prefix = 'target_' %}
+{% include "_partials/_write_s3_tables.py.j2" %}
+{% endwith %}
+{% elif target_type == 'GLUE_CATALOG' %}
+{% with key_prefix = 'target_' %}
+{% include "_partials/_write_glue_catalog.py.j2" %}
+{% endwith %}
+{% elif target_type in ('JDBC', 'RDS_DATABASE') %}
+{% with key_prefix = 'target_' %}
+{% include "_partials/_write_jdbc.py.j2" %}
+{% endwith %}
+{% elif target_type == 'S3_PARQUET' %}
+{% with key_prefix = 'target_' %}
+{% include "_partials/_write_s3_parquet.py.j2" %}
+{% endwith %}
+{% endif %}
+{# p37 R1.1: position (ii) — AFTER the per-target write partial, so
+   write_confirmed=True means the write returned without raising (risk N1),
+   and BEFORE the watermark update so a telemetry failure cannot reorder that
+   sequence. -#}
+{% with load_counts_stage = 'post_write' -%}
+{% include "_partials/_load_counts.py.j2" %}
+{%- endwith %}
+
+{% if read_mode == 'incremental' %}
+    # === Watermark update — runs only after the target write succeeds ===
+    #
+    # Runs of one pipeline never overlap: its Glue job is created with
+    # MaxConcurrentRuns=1, so a second start is refused while one runs, and
+    # each run reads the watermark the previous run committed. That is what
+    # keeps the stored watermark moving forward. The condition below compares
+    # completion times, not watermark values, so it would NOT stop an older run
+    # that finished later from writing a lower value if runs could overlap.
+    if new_watermark_value is not None:
+        _now_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            _watermarks_table.put_item(
+                Item={
+                    'pipeline_id': args['pipeline_id'],
+                    'watermark_column': args['watermark_column'],
+                    'watermark_type': args['watermark_type'],
+                    'last_value': str(new_watermark_value),
+                    'last_updated_at': _now_iso,
+                    'last_run_id': args['run_id'],
+                },
+                ConditionExpression='attribute_not_exists(last_updated_at) OR last_updated_at < :now',
+                ExpressionAttributeValues={':now': _now_iso},
+            )
+            logger.info(f"Watermark updated: {args['watermark_column']} = {new_watermark_value}")
+        except Exception as _wm_err:
+            # ConditionalCheckFailedException is expected for out-of-order
+            # completion — log and continue rather than failing the run,
+            # since the target write already succeeded.
+            if 'ConditionalCheckFailed' in str(type(_wm_err).__name__):
+                logger.warning(
+                    f"Watermark not updated — a newer run already advanced it: {_wm_err}"
+                )
+            else:
+                logger.error(f"Watermark update failed: {_wm_err}")
+                raise
+    else:
+        logger.info("No new watermark value computed (empty source) — leaving existing watermark unchanged")
+
+    df.unpersist()
+{% endif %}
+
+except Exception as e:
+    logger.error(f"ETL job failed: {str(e)}")
+    raise
+finally:
+    job.commit()

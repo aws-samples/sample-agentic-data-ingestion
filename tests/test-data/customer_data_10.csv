@@ -1,0 +1,6 @@
+acct_num,first,last,email,phone,reg_date,status,premium_member,monthly_spend_usd,referral_code
+10001,Zoe,Fisher,zoe.f@email.com,555-1001,2024-09-01,active,yes,149.99,REF-A001
+10002,Lucas,Grant,lucas.g@email.com,555-1002,2024-09-02,active,no,29.99,
+10003,Ella,Hughes,ella.h@email.com,555-1003,2024-09-03,churned,yes,0.00,REF-B002
+10004,Jack,Irving,jack.i@email.com,555-1004,2024-09-04,active,no,79.50,REF-C003
+10005,Lily,Jenkins,lily.j@email.com,555-1005,2024-09-05,trial,no,0.00,

@@ -1,0 +1,22 @@
+{
+  "run_id": "exec-run-001",
+  "pipeline_key": "pipeline-abc123",
+  "status": "succeeded",
+  "started_at": "2024-01-15T10:35:00Z",
+  "completed_at": "2024-01-15T10:42:00Z",
+  "steps_status": {
+    "file_validation": "succeeded",
+    "schema_extraction": "succeeded",
+    "schema_comparison": "succeeded",
+    "schema_mapping": "succeeded",
+    "code_generation": "succeeded",
+    "code_testing": "succeeded",
+    "infrastructure_creation": "succeeded",
+    "pipeline_execution": "succeeded",
+    "job_completion": "succeeded"
+  },
+  "current_step": "job_completion",
+  "schema_version": 1,
+  "file_key": "uploads/customer_data.csv",
+  "source_format": "csv"
+}

@@ -1,0 +1,69 @@
+{
+  "schema_name": "jdbc_customers_target",
+  "version": "1.0",
+  "description": "Target schema for the JDBC test-fixture MySQL table appdb.customers. Every field is deliberately renamed relative to the source so the schema-mapping step has real work to do.",
+  "fields": [
+    {
+      "name": "customer_id",
+      "type": "integer",
+      "required": true,
+      "description": "Unique customer identifier. Maps from the source column 'id'."
+    },
+    {
+      "name": "email_address",
+      "type": "string",
+      "required": true,
+      "format": "email",
+      "max_length": 255,
+      "description": "Customer email address. Maps from the source column 'email'."
+    },
+    {
+      "name": "full_name",
+      "type": "string",
+      "required": true,
+      "max_length": 255,
+      "description": "Customer full name, given and family name in one field. Maps from the source column 'name'."
+    },
+    {
+      "name": "registration_date",
+      "type": "date",
+      "required": true,
+      "format": "YYYY-MM-DD",
+      "description": "Date the customer registered. Maps from the source column 'created_at', which is a TIMESTAMP and must be narrowed to a date."
+    },
+    {
+      "name": "region_code",
+      "type": "string",
+      "required": true,
+      "max_length": 64,
+      "enum": ["us-west", "us-east", "eu-west", "ap-south"],
+      "description": "Customer region. Maps from the source column 'region'. The fixture data cycles through exactly these four values."
+    },
+    {
+      "name": "account_status",
+      "type": "string",
+      "required": false,
+      "enum": ["active", "inactive", "pending"],
+      "description": "Account status. NO source column supplies this — appdb.customers has no status column. Present on purpose to exercise the unsourced-target-field path."
+    }
+  ],
+  "constraints": {
+    "primary_key": ["customer_id"],
+    "unique_fields": ["email_address"],
+    "not_null_fields": ["customer_id", "email_address", "full_name", "registration_date", "region_code"]
+  },
+  "metadata": {
+    "created_by": "AgenticDataIngestion Pipeline",
+    "created_date": "2026-09-15",
+    "last_updated": "2026-09-15",
+    "data_classification": "internal",
+    "retention_period": "7_years",
+    "source_fixture": {
+      "connection": "agentic-data-ingestion-test-fixtures-mysql-source",
+      "jdbc_schema": "appdb",
+      "jdbc_table": "customers",
+      "source_columns": ["id", "email", "name", "created_at", "region"],
+      "row_count": 50
+    }
+  }
+}

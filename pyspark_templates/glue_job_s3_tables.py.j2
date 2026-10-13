@@ -1,0 +1,297 @@
+{#- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    SPDX-License-Identifier: MIT-0 -#}
+{#- pyspark_templates/glue_job_s3_tables.py.j2 — S3 Tables (Iceberg) target -#}
+{%- set write_mode = write_mode | default('overwrite') %}
+{%- set merge_key = merge_key | default('id') %}
+{%- set checkpoint_enabled = checkpoint_enabled | default(false) %}
+{%- set checkpoint_bucket = checkpoint_bucket | default('') %}
+{#- quarantine_bucket (P28 R11.1): general-purpose S3 bucket for DQ-failing rows.
+    create_code passes the generated-code bucket (adi-generated-code-*) — the
+    S3 Tables TARGET bucket is a table bucket that only accepts Iceberg table
+    writes, so loose quarantine parquet cannot go there. The Glue job role
+    already has s3:PutObject on adi-generated-code-* (iam_roles.py). -#}
+{%- set quarantine_bucket = quarantine_bucket | default('') %}
+import sys
+import logging
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.job import Job
+from pyspark.sql.functions import col, lit, trim, lower, to_date, to_timestamp, when, concat_ws, count as spark_count, regexp_replace, upper, initcap, substring, coalesce, length, split, array_contains, expr
+from pyspark.sql.types import StringType, IntegerType, LongType, DoubleType, BooleanType, DateType, TimestampType
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+# Initialize Glue context
+args = getResolvedOptions(sys.argv, [
+    'JOB_NAME', 'source_path', 'table_bucket_arn',
+    'namespace', 'table_name',
+])
+sc = SparkContext()
+glue_context = GlueContext(sc)
+spark = glue_context.spark_session
+job = Job(glue_context)
+job.init(args['JOB_NAME'], args)
+{# p37 R1.1/R1.11: the runtime-arg resolution is included UNCONDITIONALLY.
+   run_pipeline already puts --pipeline_id, --run_id, --execution_timestamp and
+   --state_table into every start_job_run
+   (run_pipeline/lambda_function.py:134-139, :176) — only the resolution was
+   ever gated. The partial's own sys.argv-presence gate is what keeps manual
+   "start job" runs (which pass no Arguments) working, and
+   glue_job_jdbc_source.py.j2 has always included it unconditionally. #}
+
+{% include "_partials/_runtime_args.py.j2" %}
+{# Comment-as-spacer, deliberate: this line and the guard comment above each
+   render one newline, so the rendered script is byte-identical for runs that
+   already resolved runtime args. Do not collapse. #}
+
+# Configure Iceberg catalog for S3 Tables
+spark.conf.set("spark.sql.catalog.s3tablesbucket", "org.apache.iceberg.spark.SparkCatalog")
+spark.conf.set("spark.sql.catalog.s3tablesbucket.catalog-impl", "software.amazon.s3tables.iceberg.S3TablesCatalog")
+spark.conf.set("spark.sql.catalog.s3tablesbucket.warehouse", args['table_bucket_arn'])
+
+target_table = f"s3tablesbucket.{args['namespace']}.{args['table_name']}"
+
+# Cache target schema once (reused for auto-cast, column selection)
+_target_schema = None
+try:
+    _target_schema = spark.read.table(target_table).schema
+    logger.info(f"Target table schema loaded: {len(_target_schema)} fields")
+except Exception:
+    logger.info("Target table not yet in Spark catalog — schema will be inferred on first write")
+
+try:
+    # Validate source path
+    source_path = args['source_path']
+    if not source_path.startswith('s3://'):
+        raise ValueError(f"Invalid source_path: {source_path} (must start with s3://)")
+
+    # Read source data
+    logger.info(f"Reading source data from {source_path}")
+{% if source_format == 'csv' %}
+    df = spark.read.option("header", True).option("inferSchema", False).option("sep", {{ source_delimiter | tojson }}).csv(source_path)
+{% elif source_format == 'parquet' %}
+    df = spark.read.parquet(source_path)
+{% elif source_format == 'avro' %}
+    df = spark.read.format("avro").load(source_path)
+{% elif source_format == 'orc' %}
+    df = spark.read.orc(source_path)
+{% else %}
+    df = spark.read.option("multiLine", True).json(source_path)
+{% endif %}
+{#- p55 R11.1/R11.2 (design W4-D1) — the Rename_Manifest projection. It sits
+    HERE: immediately after the read, and before the transform, the DQDL rules
+    and the MERGE INTO. That ordering is the whole requirement — the source is
+    read by the ORIGINAL column name (R11.1) and everything downstream sees only
+    approved names (R11.2/R11.3).
+
+    The lines are built by `code_assembly._rename_projection_block`, which emits
+    both names with `json.dumps(..., ensure_ascii=True)` and never by
+    interpolation (do-NOT 17), and passes every target through
+    `validate_identifier` before emitting it. `withColumnRenamed` takes STRING
+    arguments, so an original name never becomes a SQL identifier and neither
+    injection sink is weakened or bypassed (do-NOT 2).
+
+    `is defined and` rather than a bare truth test: every render path through
+    `code_assembly.generate_code` sets this key unconditionally, but this
+    template is also rendered directly by test fixtures that predate p55, and
+    `_get_pyspark_jinja_env` uses StrictUndefined. When no column is renamed the
+    key is `""` and this block renders nothing at all — a conforming column
+    contributes no line.
+
+    ALL of the rationale lives in this Jinja comment and none of it in the
+    emitted Python, for the reason `_partials/_load_counts.py.j2` and the p53
+    sample block give: this repo's template fences are substring assertions over
+    the RENDERED output, so naming a fenced token in emitted Python would be
+    counted as an occurrence of it (`LGR-b46a5bb-4`, template / ratified). -#}
+{%- if column_rename_block is defined and column_rename_block %}
+    {{ column_rename_block | indent(4, first=False) }}
+{%- endif %}
+
+    source_count = df.count()
+    logger.info(f"Source record count: {source_count}")
+    if source_count == 0:
+        logger.warning("Source data is empty — skipping transformation and write")
+{# p37 R1.3: position (i) — record the counts BEFORE the early exit. Without
+   this site `empty_source` is unrecordable: the job is gone before
+   transformed_count exists. `{% with %}` (not `{% set %}`) so an include
+   added later without a stage fails the render under StrictUndefined rather
+   than inheriting a leaked one. -#}
+{% with load_counts_stage = 'empty_source' -%}
+{% include "_partials/_load_counts.py.j2" %}
+{%- endwith %}
+        job.commit()
+        sys.exit(0)
+
+    # === AI-Generated Transform Block ===
+{% if checkpoint_enabled %}
+    from pyspark.sql.utils import AnalysisException as _AnalysisException
+    # P28 R19.9: per-run checkpoint location (run_id via getResolvedOptions —
+    # see _runtime_args above). JOB_NAME is kept in the path so runs group per
+    # job inside the shared checkpoint bucket; the checkpoints/ prefix keeps
+    # new scripts from ever resuming a legacy shared-'default' checkpoint.
+    checkpoint_path = f"s3://{{ checkpoint_bucket }}/checkpoints/{args['JOB_NAME']}/{_adi_effective_run_id}/"
+    try:
+        df_transformed = spark.read.parquet(checkpoint_path)
+        logger.info(f"Resumed from checkpoint: {checkpoint_path}")
+    except _AnalysisException:
+        {{ transform_block | indent(8, first=False) }}
+        df_transformed.write.mode("overwrite").parquet(checkpoint_path)
+        logger.info(f"Checkpoint saved to: {checkpoint_path}")
+{% else %}
+    {{ transform_block | indent(4, first=False) }}
+{% endif %}
+    # === End Transform Block ===
+{#- p64 R9.1/R9.3 (design C10) — the type-cast failure count, via the shared
+    partial. It sits HERE, immediately BEFORE the auto-cast loop, and that is the
+    whole mechanism rather than a placement preference: the loop below rebinds
+    each column to its converted value, after which the pre-conversion value is
+    gone and a predicate asking "was the source non-null" is False for exactly the
+    cells being counted. Measured after the loop the number is silently always
+    zero. The partial's header carries the full argument, the reason the finding
+    lands as a `checks[]` entry rather than on the load_metrics row, and the
+    whitespace arithmetic that makes the disabled arm cost zero rendered bytes.
+    Note the blank line below is load-bearing for that arithmetic and the
+    equivalent site in `glue_job_jdbc_source.py.j2` deliberately has none. -#}
+{%- include "_partials/_cast_null_check.py.j2" %}
+
+    # === Auto-cast + column selection (single pass using cached schema) ===
+    if _target_schema:
+        for field in _target_schema:
+            if field.name in df_transformed.columns:
+                source_type = df_transformed.schema[field.name].dataType
+                if source_type != field.dataType:
+                    logger.info(f"Casting {field.name}: {source_type} -> {field.dataType}")
+                    if isinstance(field.dataType, DateType):
+                        df_transformed = df_transformed.withColumn(
+                            field.name,
+                            when(col(field.name).isNull(), lit(None).cast(DateType()))
+                            .otherwise(to_date(col(field.name)))
+                        )
+                    elif isinstance(field.dataType, TimestampType):
+                        df_transformed = df_transformed.withColumn(
+                            field.name,
+                            when(col(field.name).isNull(), lit(None).cast(TimestampType()))
+                            .otherwise(to_timestamp(col(field.name)))
+                        )
+                    else:
+                        df_transformed = df_transformed.withColumn(field.name, col(field.name).cast(field.dataType))
+        # Select only target columns to avoid INSERT_COLUMN_ARITY_MISMATCH
+        target_columns = [f.name for f in _target_schema if f.name in df_transformed.columns]
+        if target_columns:
+            logger.info(f"Selecting {len(target_columns)} target columns from {len(df_transformed.columns)} available")
+            df_transformed = df_transformed.select(*target_columns)
+    # === End Auto-cast + Select ===
+{#- p64 R7.1/R7.2 (design C7) — the dedup drop, via the shared partial. ONE
+    include site, and it sits HERE deliberately: after the column selection, so a
+    bare `dropDuplicates()` keys on exactly the mapped target columns (R7.2's
+    default), and BEFORE the DQ 'evaluate' site below, so duplicate rows are not
+    quarantined as `Uniqueness` failures before dedup sees them — which would fold
+    the dedup drops into `rows_quarantined` and defeat R7.6. The partial's header
+    carries the full ordering argument and the whitespace arithmetic that makes the
+    disabled arm cost zero rendered bytes. Do not move it below `transformed_count`. -#}
+{%- include "_partials/_dedup.py.j2" %}
+
+{% with data_quality_stage = 'evaluate' -%}
+{% include "_partials/_data_quality.py.j2" %}
+{%- endwith %}
+{#- p64 R8.1/R8.2 (task 2d.2) — the non-printable character check, via the shared
+    partial. ONE include site, and it sits HERE deliberately: AFTER the DQ
+    'evaluate' site above, because that stage rebinds df_transformed to the Passed
+    split, so counting earlier would count rows that are about to be quarantined
+    and never written; and BEFORE `transformed_count` below, because the local it
+    leaves behind (`_adi_np_rows`) is read by the DQ 'report' stage further down.
+    The check FLAGS — it diverts no rows and adds nothing to rows_quarantined — and
+    its disabled arm costs zero rendered bytes. The partial's header carries the
+    full argument, the character class, and the pairing rule between its guard and
+    the report stage's. -#}
+{%- include "_partials/_nonprintable_check.py.j2" %}
+
+    transformed_count = df_transformed.count()
+    logger.info(f"Transformed record count: {transformed_count} (filtered {source_count - transformed_count} records)")
+{% with data_quality_stage = 'report' -%}
+{% include "_partials/_data_quality.py.j2" %}
+{%- endwith %}
+    # Write to Iceberg table via S3 Tables
+    logger.info(f"Writing to Iceberg table: {target_table}")
+{% if write_mode == 'merge' %}
+    # Resolve the --merge_key job argument via the R19.9 optional-argument
+    # mechanism, falling back to the validated template value. The former
+    # args-dict read could NEVER see the argument — merge_key is not in the
+    # top-level getResolvedOptions list, so the configured key was silently
+    # ignored and every MERGE ran on 'id' (caught live in task 17.2).
+    merge_key = _runtime_arg("merge_key", "{{ merge_key }}")
+    # P28 R12: merge_key is f-string'd into the MERGE INTO statement below.
+    # Enforce the identifier allowlist at the SQL sink itself — a hostile
+    # --merge_key job argument must fail the job, never become SQL.
+    import re as _re
+    if len(merge_key) > 255 or not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", merge_key):
+        raise ValueError(f"Invalid merge_key identifier for MERGE INTO: {merge_key!r}")
+    try:
+        spark.read.table(target_table)
+        df_transformed.createOrReplaceTempView("source_data")
+        spark.sql(f"""
+            MERGE INTO {target_table} t
+            USING source_data s
+            ON t.{merge_key} = s.{merge_key}
+            WHEN MATCHED THEN UPDATE SET *
+            WHEN NOT MATCHED THEN INSERT *
+        """)
+    except Exception as _merge_err:
+        if "TABLE_OR_VIEW_NOT_FOUND" in str(_merge_err):
+            logger.info("Table not yet in Spark catalog — creating with initial write")
+            df_transformed.writeTo(target_table).using("iceberg").createOrReplace()
+        else:
+            raise
+{% elif write_mode == 'append' %}
+    try:
+{% if partition_columns %}
+        df_transformed.writeTo(target_table).using("iceberg").partitionedBy({{ partition_columns }}).append()
+{% else %}
+        df_transformed.writeTo(target_table).using("iceberg").append()
+{% endif %}
+    except Exception as _append_err:
+        if "TABLE_OR_VIEW_NOT_FOUND" in str(_append_err):
+            logger.info("Table not yet in Spark catalog — creating with initial write")
+{% if partition_columns %}
+            df_transformed.writeTo(target_table).using("iceberg").partitionedBy({{ partition_columns }}).createOrReplace()
+{% else %}
+            df_transformed.writeTo(target_table).using("iceberg").createOrReplace()
+{% endif %}
+        else:
+            raise
+{% else %}
+{% if partition_columns %}
+    df_transformed.writeTo(target_table).using("iceberg").partitionedBy({{ partition_columns }}).createOrReplace()
+{% else %}
+    df_transformed.writeTo(target_table).using("iceberg").createOrReplace()
+{% endif %}
+{% endif %}
+
+    logger.info("Write complete")
+{# p37 R1.1: position (ii) — AFTER the write block, so write_confirmed=True
+   means the write returned without raising (risk N1). It sits BEFORE the
+   record-count reconciliation below deliberately: that block is the one
+   pre-existing post-write re-read (`_partials`-free, this template only) and
+   must not become a precondition for recording the counts. -#}
+{% with load_counts_stage = 'post_write' -%}
+{% include "_partials/_load_counts.py.j2" %}
+{%- endwith %}
+
+    # Record count reconciliation
+    try:
+        output_count = spark.read.table(target_table).count()
+        if output_count != transformed_count:
+            logger.warning(f"Record count mismatch: transformed={transformed_count}, written={output_count}")
+        else:
+            logger.info(f"Record count verified: {output_count}")
+    except Exception:
+        pass
+
+except Exception as e:
+    logger.error(f"ETL job failed: {str(e)}")
+    raise
+finally:
+    job.commit()

@@ -1,0 +1,209 @@
+{#- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    SPDX-License-Identifier: MIT-0 -#}
+{#- pyspark_templates/glue_job_glue_catalog.py.j2 — Glue Catalog target -#}
+{%- set write_mode = write_mode | default('overwrite') %}
+{%- set merge_key = merge_key | default('id') %}
+{%- set checkpoint_enabled = checkpoint_enabled | default(false) %}
+{%- set checkpoint_bucket = checkpoint_bucket | default('') %}
+import sys
+import logging
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.job import Job
+from awsglue.dynamicframe import DynamicFrame
+from pyspark.sql.functions import col, lit, trim, lower, to_date, to_timestamp, when, concat_ws, count as spark_count, regexp_replace, upper, initcap, substring, coalesce, length, split, array_contains, expr
+from pyspark.sql.types import StringType, IntegerType, LongType, DoubleType, BooleanType, DateType, TimestampType
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+# Initialize Glue context
+args = getResolvedOptions(sys.argv, [
+    'JOB_NAME', 'source_path', 'database_name', 'table_name',
+])
+sc = SparkContext()
+glue_context = GlueContext(sc)
+spark = glue_context.spark_session
+job = Job(glue_context)
+job.init(args['JOB_NAME'], args)
+{# p37 R1.1/R1.11: the runtime-arg resolution is included UNCONDITIONALLY.
+   run_pipeline already puts --pipeline_id, --run_id, --execution_timestamp and
+   --state_table into every start_job_run
+   (run_pipeline/lambda_function.py:134-139, :176) — only the resolution was
+   ever gated. The partial's own sys.argv-presence gate is what keeps manual
+   "start job" runs (which pass no Arguments) working, and
+   glue_job_jdbc_source.py.j2 has always included it unconditionally. #}
+
+{% include "_partials/_runtime_args.py.j2" %}
+{# Comment-as-spacer, deliberate: this line and the guard comment above each
+   render one newline, so the rendered script is byte-identical for runs that
+   already resolved runtime args. Do not collapse. #}
+
+try:
+    # Validate source path
+    source_path = args['source_path']
+    if not source_path.startswith('s3://'):
+        raise ValueError(f"Invalid source_path: {source_path} (must start with s3://)")
+
+    # Read source data
+    logger.info(f"Reading source data from {source_path}")
+{% if source_format == 'csv' %}
+    df = spark.read.option("header", True).option("inferSchema", False).option("sep", {{ source_delimiter | tojson }}).csv(source_path)
+{% elif source_format == 'parquet' %}
+    df = spark.read.parquet(source_path)
+{% elif source_format == 'avro' %}
+    df = spark.read.format("avro").load(source_path)
+{% elif source_format == 'orc' %}
+    df = spark.read.orc(source_path)
+{% else %}
+    df = spark.read.option("multiLine", True).json(source_path)
+{% endif %}
+{#- p55 R11.1/R11.2 (design W4-D1) — the Rename_Manifest projection. It sits
+    HERE: immediately after the read, and before the transform, the DQDL rules
+    and the write. That ordering is the whole requirement — the source is read by
+    the ORIGINAL column name (R11.1) and everything downstream sees only approved
+    names (R11.2/R11.3). See `glue_job_s3_tables.py.j2`'s copy of this comment
+    for the full rationale, `json.dumps` emission (do-NOT 17), the
+    `validate_identifier` call on every target (do-NOT 2), and why the guard is
+    `is defined and` under StrictUndefined. -#}
+{%- if column_rename_block is defined and column_rename_block %}
+    {{ column_rename_block | indent(4, first=False) }}
+{%- endif %}
+
+    source_count = df.count()
+    logger.info(f"Source record count: {source_count}")
+    if source_count == 0:
+        logger.warning("Source data is empty — skipping transformation and write")
+{# p37 R1.3: position (i) — record the counts BEFORE the early exit. Without
+   this site `empty_source` is unrecordable: the job is gone before
+   transformed_count exists. `{% with %}` (not `{% set %}`) so an include
+   added later without a stage fails the render under StrictUndefined rather
+   than inheriting a leaked one. -#}
+{% with load_counts_stage = 'empty_source' -%}
+{% include "_partials/_load_counts.py.j2" %}
+{%- endwith %}
+        job.commit()
+        sys.exit(0)
+
+    # === AI-Generated Transform Block ===
+{% if checkpoint_enabled %}
+    from pyspark.sql.utils import AnalysisException as _AnalysisException
+    # P28 R19.9: per-run checkpoint location (run_id via getResolvedOptions —
+    # see _runtime_args above). JOB_NAME is kept in the path so runs group per
+    # job inside the shared checkpoint bucket; the checkpoints/ prefix keeps
+    # new scripts from ever resuming a legacy shared-'default' checkpoint.
+    checkpoint_path = f"s3://{{ checkpoint_bucket }}/checkpoints/{args['JOB_NAME']}/{_adi_effective_run_id}/"
+    try:
+        df_transformed = spark.read.parquet(checkpoint_path)
+        logger.info(f"Resumed from checkpoint: {checkpoint_path}")
+    except _AnalysisException:
+        {{ transform_block | indent(8, first=False) }}
+        df_transformed.write.mode("overwrite").parquet(checkpoint_path)
+        logger.info(f"Checkpoint saved to: {checkpoint_path}")
+{% else %}
+    {{ transform_block | indent(4, first=False) }}
+{% endif %}
+    # === End Transform Block ===
+
+    # === Auto-cast columns to match target Glue Catalog schema ===
+    try:
+        target_df = glue_context.create_dynamic_frame.from_catalog(
+            database=args['database_name'], table_name=args['table_name']
+        ).toDF()
+        if target_df.schema:
+            for field in target_df.schema:
+                if field.name in df_transformed.columns:
+                    source_type = df_transformed.schema[field.name].dataType
+                    if source_type != field.dataType:
+                        logger.info(f"Casting {field.name}: {source_type} -> {field.dataType}")
+                        df_transformed = df_transformed.withColumn(field.name, col(field.name).cast(field.dataType))
+    except Exception as _cast_err:
+        logger.info(f"Skipping auto-cast (target table may not exist yet): {_cast_err}")
+    # === End Auto-cast ===
+
+    # === Select only target columns ===
+    try:
+        target_table_name = f"{args['database_name']}.{args['table_name']}"
+        target_columns = [f.name for f in spark.read.table(target_table_name).schema]
+        available = [c for c in target_columns if c in df_transformed.columns]
+        if available:
+            logger.info(f"Selecting {len(available)} target columns from {len(df_transformed.columns)} available")
+            df_transformed = df_transformed.select(*available)
+    except Exception as _select_err:
+        logger.info(f"Skipping column selection (target table may not exist yet): {_select_err}")
+    # === End Select ===
+{#- p64 R7.1/R7.2 (design C7) — the dedup drop, via the shared partial. ONE
+    include site, placed after the column selection and BEFORE the DQ 'evaluate'
+    site below. See `glue_job_s3_tables.py.j2`'s copy of this comment and the
+    partial's own header for why both halves of that position are load-bearing
+    (R7.2's empty-list default, and R7.6's separation of dedup drops from
+    quarantine). Note the select above sits in a `try` that logs and skips when
+    the target table does not exist yet, so on a first run the bare call keys on
+    the transform's columns rather than the catalog's — the partial's header
+    states that limit rather than glossing it. -#}
+{%- include "_partials/_dedup.py.j2" %}
+
+{# p64 R6.1/R6.2 (design C6) — inline Glue Data Quality, via the shared
+   partial rather than a fourth copy of it. TWO include sites, and the order is
+   load-bearing: 'evaluate' must follow the transform and the auto-cast/column
+   selection (it evaluates the rules against the frame that will actually be
+   written, and rebinds df_transformed to the Passed rows), and 'report' must
+   follow `transformed_count` because the counter it publishes as `rows_passed`
+   IS `transformed_count`. See the partial's header for the fence on the
+   quarantine write and for why its indentation is literal. -#}
+{% with data_quality_stage = 'evaluate' -%}
+{% include "_partials/_data_quality.py.j2" %}
+{%- endwith %}
+{#- p64 R8.1/R8.2 (task 2d.2) — the non-printable character check, via the shared
+    partial. ONE include site, and it sits HERE deliberately: AFTER the DQ
+    'evaluate' site above, because that stage rebinds df_transformed to the Passed
+    split, so counting earlier would count rows that are about to be quarantined
+    and never written; and BEFORE `transformed_count` below, because the local it
+    leaves behind (`_adi_np_rows`) is read by the DQ 'report' stage further down.
+    The check FLAGS — it diverts no rows and adds nothing to rows_quarantined — and
+    its disabled arm costs zero rendered bytes. The partial's header carries the
+    full argument, the character class, and the pairing rule between its guard and
+    the report stage's. -#}
+{%- include "_partials/_nonprintable_check.py.j2" %}
+
+    transformed_count = df_transformed.count()
+    logger.info(f"Transformed record count: {transformed_count} (filtered {source_count - transformed_count} records)")
+{% with data_quality_stage = 'report' -%}
+{% include "_partials/_data_quality.py.j2" %}
+{%- endwith %}
+    # Convert to DynamicFrame and write to Glue Catalog
+{% if partition_columns %}
+    dynamic_frame = DynamicFrame.fromDF(df_transformed.repartition({{ partition_columns }}), glue_context, "output")
+{% else %}
+    dynamic_frame = DynamicFrame.fromDF(df_transformed, glue_context, "output")
+{% endif %}
+    logger.info(f"Writing to Glue Catalog: {args['database_name']}.{args['table_name']}")
+{% if write_mode == 'append' %}
+    glue_context.write_dynamic_frame.from_catalog(
+        frame=dynamic_frame,
+        database=args['database_name'],
+        table_name=args['table_name'],
+        additional_options={"enableUpdateCatalog": True},
+    )
+{% else %}
+    glue_context.write_dynamic_frame.from_catalog(
+        frame=dynamic_frame,
+        database=args['database_name'],
+        table_name=args['table_name'],
+    )
+{% endif %}
+
+    logger.info("Write to Glue Catalog complete")
+{# p37 R1.1: position (ii) — AFTER the write block, so write_confirmed=True
+   means the write returned without raising (risk N1). -#}
+{% with load_counts_stage = 'post_write' -%}
+{% include "_partials/_load_counts.py.j2" %}
+{%- endwith %}
+
+except Exception as e:
+    logger.error(f"ETL job failed: {str(e)}")
+    raise
+finally:
+    job.commit()

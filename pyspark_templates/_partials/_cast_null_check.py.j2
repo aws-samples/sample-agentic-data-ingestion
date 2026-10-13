@@ -1,0 +1,249 @@
+{#- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    SPDX-License-Identifier: MIT-0 -#}
+{#- _partials/_cast_null_check.py.j2 — the type-cast failure count
+    (p64 R9.1/R9.3, design C10, task 2e.1).
+
+    THE DEFECT THIS EXISTS FOR. Spark's `cast` returns NULL on failure rather
+    than raising. A source value of `"twenty-five"` cast to `int` becomes NULL,
+    and from that point on it is indistinguishable from a row whose source
+    genuinely had no value. The DQ `Completeness` rule counts both the same way,
+    which is how a bad value passes as missing data. R9.1 records that this — not
+    a type rule — is what actually caught `"twenty-five"` in the reliability
+    report's Test 7; no type rule exists anywhere in the generated job. R9.3
+    requires the two be distinguishable in whatever is reported.
+
+    THE MOMENT OF THE CONVERSION IS THE ONLY PLACE THE ANSWER IS CHEAP, which is
+    C10's mechanism and the reason this block sits BEFORE the auto-cast loop
+    rather than after it. Both the pre-conversion value and the target type are
+    in hand here. One statement later the column has been rebound to the
+    converted value, and `col(name).isNotNull()` is then False for exactly the
+    cells being looked for — so a predicate accumulated now and evaluated after
+    the loop would report zero on every run. This is not a style preference: it is
+    the difference between a working count and one that is silently always zero.
+
+    IT COUNTS CELLS, NOT ROWS, AND IT LOSES NEITHER. Every row continues to the
+    target with the NULL in place. The number is how many (row, column) values
+    were nulled BY the conversion, which is a different quantity from a row count
+    and is deliberately not comparable with one.
+
+    WHY THE FINDING GOES ON THE `checks[]` LIST AND NOT THE
+    `(run_id, "load_metrics")` ROW. Task 2c.4 put `rows_deduplicated` on that row
+    because R7.6's decomposition is an arithmetic identity over ROWS —
+    rows_read = rows_written + rows_dropped + rows_quarantined — and a dedup drop
+    is a term in that sum. A conversion NULL is not a term in it: the row is
+    written, in full, with one field nulled, so adding a cell count to that row
+    would let a reader summing its terms over-count losses that never happened.
+    Two further reasons, both about where the wrong conclusion is formed:
+
+      * The place a SOURCE null is reported is the `Completeness` rule's outcome
+        in the data quality report's `checks[]`. R9.3's "distinguishable" is only
+        satisfied if the other half of the distinction is legible in the same
+        document; on a separate row it would be a true number nobody reads
+        beside the claim it corrects.
+      * It is a finding that is not a rule outcome, which is a shape task 2d.3
+        already settled. Its three constraints are inherited verbatim below.
+
+    2d.3's CONSTRAINTS, INHERITED RATHER THAN RE-DECIDED. Status is `warning`,
+    the third value `QualityCheck.status` admits — there is no fourth, and
+    `fail` is reserved for an outcome that removed rows from the frame, which
+    this did not. The entry is counted in NONE of `rules_passed` /
+    `rules_failed` / `rules_total`, which describe the DQDL ruleset. It moves
+    neither `overall_status` nor `rows_quarantined`.
+
+    WHERE THE ENTRY IS EMITTED: inline in `_partials/_data_quality.py.j2`'s
+    'report' stage, under a duplicate of this file's guard, NOT from here. The
+    report row is one `put_item` on a PutItem-only role (`LGR-9e76249-3`), so a
+    second writer clobbers rather than merges, and the entry has to join the
+    `_dq_checks` list already being built inside that single write.
+
+    THE APPEND IS ADDITIONALLY GUARDED ON THE LOCAL EXISTING, and that guard is
+    not decoration — it is what makes this partial's narrower reach safe. The DQ
+    partial renders on all five templates; this one can only render where an
+    auto-cast block exists. So a Glue-Catalog- or Parquet-target pipeline that
+    sets the key would reach an append whose local was never defined, and because
+    the whole report write sits inside `except Exception as _ddb_err`, the
+    consequence would not be a crash but the SILENT LOSS OF THE ENTIRE DQ REPORT
+    ROW. That is a worse failure than the one this feature removes.
+    `_data_quality.py.j2` therefore tests membership in `locals()` before
+    building the entry, so an unmeasured run simply has no entry.
+
+    ABSENT IS NOT ZERO, which is why that append is skipped rather than defaulted.
+    "No conversion nulled a value" is a claim only a run that measured can make.
+    Emitting `0` for a template that casts inside a `try` it never inspected would
+    be the same class of lie R9.3 exists to remove, one level up. Task 2c.4 drew
+    the same line for an omitted key versus a written zero.
+
+    REACH, STATED RATHER THAN DISCOVERED. Two include sites, both S3 Tables arms:
+    `glue_job_s3_tables.py.j2` and `glue_job_jdbc_source.py.j2`'s
+    `target_type == 'S3_TABLES'` branch. Both use the same cached `_target_schema`
+    local, which is what makes one partial serve both. NOT included at:
+
+      * the two Glue Catalog arms (`glue_job_glue_catalog.py.j2`, and
+        `glue_job_jdbc_source.py.j2`'s `GLUE_CATALOG` branch). Their cast loop
+        runs inside a `try` whose schema comes from a runtime
+        `create_dynamic_frame.from_catalog` read, so there is no equivalent local
+        to read before the loop and the whole block is skipped when the target
+        table does not exist yet. Wiring it there means restructuring that `try`,
+        which changes rendered bytes for every existing Glue Catalog pipeline.
+        DEFERRED AND CURRENTLY UNOWNED, recorded as design O8 rather than silently
+        skipped. No task owns it: task 2e.2's text is R9.2, and neither of R9.2's
+        clauses is "wire the count into the Glue Catalog arm" — earlier revisions of
+        this header named 2e.2 as the owner, which was wrong. O8 also carries the
+        reason deferring is not laziness: anything placed inside that `try` has its
+        failures swallowed by `except Exception as _cast_err` and reported as
+        "Skipping auto-cast (target table may not exist yet)", which is a misleading
+        message about a silently broken count — the same class of lie R9 exists to
+        remove, one level up.
+      * `glue_job_jdbc.py.j2` and `glue_job_s3_parquet.py.j2`, which contain no
+        conversion at all — so no conversion can null a value and there is
+        nothing to count. That is an absence of the phenomenon rather than a
+        coverage gap.
+
+    ONE EXTRA SPARK ACTION, PAID ONLY INSIDE THE ENABLED ARM. All per-column sums
+    go into a SINGLE `agg`, collected once — so the cost is one pass over the
+    frame regardless of how many columns are being converted, not one per column.
+    A pipeline that has not opted in pays nothing. That is the same bargain
+    `_partials/_dedup.py.j2`'s two counts and `_nonprintable_check.py.j2`'s one
+    strike.
+
+    THE AGGREGATE IS ALIASED BY POSITION, NOT BY COLUMN NAME, and the row is read
+    positionally to match. Aliasing by the schema's own field name would put a
+    runtime-supplied string into an `alias(...)`, and while every target column
+    name downstream has already passed p55 R11.3's rename projection, an index
+    cannot be made to mean anything else at all. The parallel name list keeps the
+    reporting readable without giving the alias a job it does not need.
+
+    ZERO RENDERED BYTES WHEN DISABLED, exactly as `_partials/_dedup.py.j2` and
+    `_partials/_nonprintable_check.py.j2` are. The whitespace arithmetic is the
+    same one: the caller's `{%- include %}` strips the newline that ended the line
+    above it, the outer `{%- if %}` and the blank line opening its body restore it
+    when enabled, and `{%- endif -%}` strips the trailing one. Note the two
+    include sites need DIFFERENT surrounding blank lines because the lines they
+    sit between differ — `glue_job_s3_tables.py.j2` has a blank line at that point
+    and `glue_job_jdbc_source.py.j2` does not. Do not tidy either side's minus
+    signs independently, and do not assume the two sites are copy-identical;
+    `test_cast_null_check_all_targets.py`'s byte-identity assertion is the fence.
+
+    THE GUARD IS `is mapping and … is true`, AND IT IS DELIBERATELY **NOT** THE
+    `is defined and` IDIOM `data_quality_enabled` AND `dqdl_rules` USE. Both
+    sibling partials carry the full account; the short version is that `is defined`
+    was tried and FAILED, because
+    `test_dq_template_vars_contract.py`'s
+    `test_dq_block_survives_a_second_jinja2_copy_in_sys_modules` renders all five
+    templates with no `quality_config` and two jinja2 copies loaded — under which
+    `Context.resolve_or_missing` hands back one copy's `missing` sentinel while the
+    compiled template tests identity against the other's. `_MissingType` is not an
+    `Undefined`, so `is defined` answers True and the read behind it raises.
+    `is mapping` is an `isinstance` check against `abc.Mapping`, which consults no
+    sentinel, so its answer does not depend on how many jinja2 copies are loaded.
+    It also fails CLOSED in every case: unset, `None`, a scalar, or a dict without
+    the key all leave the count off.
+
+    `.get(...)` for the same reason, and it is NOT the default-value filter
+    do-NOT 6 forbids: that filter decides by asking whether its input is an
+    `Undefined` instance, which is the identity question two jinja2 copies make
+    unanswerable, whereas `.get` is a plain method on a value `is mapping` has
+    already established is a real dict. That filter's name is deliberately not
+    spelled anywhere in this file — the fence over it is a substring count across
+    the whole file, so a header naming it would be counted as a violation of
+    itself (`LGR-b46a5bb-4`). Both sibling partials carry the same note for the
+    same reason.
+
+    `is true` rather than plain truthiness mirrors `resolve_quality_config`'s own
+    rule that only an explicit `bool` opts in, so the string `"false"` cannot mean
+    enabled here either.
+
+    NO PIPELINE-SUPPLIED IDENTIFIER REACHES THE EMITTED CODE. The column list is
+    derived at runtime from `_target_schema` and `df_transformed.columns`, exactly
+    as the auto-cast loop it shadows already does, so this partial opens NO
+    generated-code sink: there is no name here for `validate_identifier` to guard
+    and R8.5 / do-NOT 7's ordering rule is untouched by it. `LGR-819980f-1`
+    (INVARIANT) is likewise unaffected — the only render variable interpolated is
+    `quality_config`, and nothing is added to the `getResolvedOptions` key list.
+
+    NO STAGE VARIABLE, for the reason `_dedup.py.j2`'s header gives: this partial
+    has one emission point, so a stage argument would be ceremony with a second
+    failure mode. That also keeps its whole context surface to the single variable
+    `quality_config`, so `test_dq_template_vars_contract.py`'s `P64_PARTIALS`
+    fence covers it with no new exclusions.
+
+    REQUIRED CONTEXT VARIABLE: `quality_config`, assigned unconditionally in
+    `code_assembly.generate_code`'s `template_vars` from
+    `resolve_quality_config`, which returns every recognised key on every call
+    (R6.5 / do-NOT 6, design C7).
+
+    REQUIRED CALLER LOCALS: `_target_schema` and `df_transformed`, both of which
+    the auto-cast block immediately below every include site already reads.
+
+    ALL of the rationale lives in this Jinja comment and none of it in the
+    emitted Python, per `LGR-b46a5bb-4` (template / ratified): this repo's
+    template fences are substring assertions over the RENDERED output, so naming
+    a fenced token in emitted Python would be counted as an occurrence of it.
+-#}
+{%- if quality_config is mapping and quality_config.get("cast_null_check_enabled") is true %}
+
+    # === Type-cast failure count (p64 R9.1/R9.3) ===
+    # Taken BEFORE the conversion below, because that is the only point at which
+    # both the source value and the target type are in hand. A cell counted here
+    # held a real source value that the conversion could not represent — it is
+    # NOT a source that was empty, and the completeness rule cannot tell the two
+    # apart. Counts cells, not rows: every row continues to the target.
+    # One aggregate, one pass over the frame, however many columns convert.
+    _adi_cast_null_cells = 0
+    _adi_cast_null_detail = ""
+    _adi_cast_names = []
+    if _target_schema:
+        from pyspark.sql import functions as _adi_cast_functions
+        from pyspark.sql.types import DateType as _adi_cast_date_type
+        from pyspark.sql.types import TimestampType as _adi_cast_timestamp_type
+
+        _adi_cast_terms = []
+        for _adi_cast_field in _target_schema:
+            if _adi_cast_field.name not in df_transformed.columns:
+                continue
+            if df_transformed.schema[_adi_cast_field.name].dataType == _adi_cast_field.dataType:
+                continue
+            # Mirrors the three arms of the conversion below exactly. to_date and
+            # to_timestamp null an unparseable value the same way cast does.
+            _adi_cast_source = _adi_cast_functions.col(_adi_cast_field.name)
+            if isinstance(_adi_cast_field.dataType, _adi_cast_date_type):
+                _adi_cast_result = _adi_cast_functions.to_date(_adi_cast_source)
+            elif isinstance(_adi_cast_field.dataType, _adi_cast_timestamp_type):
+                _adi_cast_result = _adi_cast_functions.to_timestamp(_adi_cast_source)
+            else:
+                _adi_cast_result = _adi_cast_source.cast(_adi_cast_field.dataType)
+            # Aliased by position; the parallel list carries the names.
+            _adi_cast_terms.append(
+                _adi_cast_functions.sum(
+                    _adi_cast_functions.when(
+                        _adi_cast_source.isNotNull() & _adi_cast_result.isNull(), 1
+                    ).otherwise(0)
+                ).alias(f"c{len(_adi_cast_terms)}")
+            )
+            _adi_cast_names.append(_adi_cast_field.name)
+        if _adi_cast_terms:
+            _adi_cast_row = df_transformed.agg(*_adi_cast_terms).collect()[0]
+            _adi_cast_hits = {
+                _adi_cast_names[_adi_cast_index]: int(_adi_cast_row[_adi_cast_index])
+                for _adi_cast_index in range(len(_adi_cast_names))
+                if _adi_cast_row[_adi_cast_index]
+            }
+            _adi_cast_null_cells = sum(_adi_cast_hits.values())
+            _adi_cast_null_detail = ", ".join(
+                f"{_adi_cast_column}={_adi_cast_count}"
+                for _adi_cast_column, _adi_cast_count in sorted(_adi_cast_hits.items())
+            )
+    if _adi_cast_null_cells > 0:
+        logger.warning(
+            f"Type-cast failure count: {_adi_cast_null_cells} value(s) became NULL because the "
+            f"source held something the target type cannot represent ({_adi_cast_null_detail}). "
+            f"These had a source value and are not empty sources; the completeness rule cannot "
+            f"tell them apart. Rows were kept."
+        )
+    else:
+        logger.info(
+            f"Type-cast failure count: every non-null source value converted cleanly across "
+            f"{len(_adi_cast_names)} converting column(s)"
+        )
+    # === End Type-cast failure count ===
+{%- endif -%}

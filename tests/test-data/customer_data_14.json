@@ -1,0 +1,7 @@
+{"records": [
+  {"pk": "CUST#14001", "name": {"first": "Elise", "last": "Beaumont"}, "contact": {"email": "elise.b@email.com", "phone": "555-1401"}, "metadata": {"created": "2024-01-10", "status": "verified", "source": "web"}},
+  {"pk": "CUST#14002", "name": {"first": "Mateo", "last": "Castillo"}, "contact": {"email": "mateo.c@email.com", "phone": "555-1402"}, "metadata": {"created": "2024-02-14", "status": "verified", "source": "mobile"}},
+  {"pk": "CUST#14003", "name": {"first": "Ingrid", "last": "Dahl"}, "contact": {"email": "ingrid.d@email.com", "phone": "555-1403"}, "metadata": {"created": "2024-03-20", "status": "unverified", "source": "import"}},
+  {"pk": "CUST#14004", "name": {"first": "Tariq", "last": "El-Amin"}, "contact": {"email": "tariq.e@email.com", "phone": "555-1404"}, "metadata": {"created": "2024-04-08", "status": "verified", "source": "api"}},
+  {"pk": "CUST#14005", "name": {"first": "Freya", "last": "Gustafsson"}, "contact": {"email": "freya.g@email.com", "phone": "555-1405"}, "metadata": {"created": "2024-05-30", "status": "suspended", "source": "web"}}
+]}

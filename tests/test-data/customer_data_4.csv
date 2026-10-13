@@ -1,0 +1,6 @@
+customer_id,first_name,last_name,email_address,phone_number,signup_date,account_status,country
+4001,Ashley,Walker,ashley.walker@email.com,555-0401,2024-04-01,active,USA
+4002,Ryan,Hall,ryan.hall@email.com,555-0402,2024-04-02,active,USA
+4003,Nicole,Allen,n.allen@email.com,555-0403,2024-04-03,inactive,Canada
+4004,Kevin,Young,kevin.y@email.com,555-0404,2024-04-04,active,USA
+4005,Stephanie,King,s.king@email.com,555-0405,2024-04-05,pending,Canada

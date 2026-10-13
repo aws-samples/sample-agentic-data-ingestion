@@ -1,0 +1,498 @@
+{#- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+    SPDX-License-Identifier: MIT-0 -#}
+{#- _partials/_data_quality.py.j2 — inline Glue Data Quality: evaluation, the
+    row-level Passed/Failed split, the quarantine write, and the DQ report row
+    (P28 R11.1; extracted by p64 R6.1/R6.2).
+
+    EXTRACTED, NOT REWRITTEN. Every line below was moved verbatim out of
+    glue_job_s3_tables.py.j2 (regions :174-271 and :275-345 as they stood).
+    p64 2b.1 was a pure extraction whose acceptance test was that
+    glue_job_s3_tables.py.j2 rendered BYTE-IDENTICALLY before and after, over
+    the full source_format x checkpoint_enabled x write_mode x dqdl_rules x
+    quarantine_bucket x partition_columns x column_rename_block matrix. 2b.2
+    ported it to the other four templates; 2b.4 added the `data_quality_enabled`
+    gate below.
+
+    THE GATE, AND WHY IT IS AN `and` ON THE EXISTING GUARD (p64 R6.6 / O4).
+    Both stages' bodies are behind
+    `{% if data_quality_enabled is defined and data_quality_enabled and dqdl_rules … %}`.
+    2b.2 made this block reachable from every target type, which — ungated —
+    would give an EXISTING pipeline of any other target type row-level
+    splitting, a quarantine write and a DQ verdict it never had, and would move
+    `shared/quality_verdict.py`'s reported mode from advisory to `enforced` for
+    a pipeline whose behaviour nobody changed. R6.6 forbids that.
+
+    `data_quality_enabled` is resolved ONCE, by
+    `code_assembly.resolve_data_quality_enabled`, and defaults to the posture
+    each template had before p64 — on for glue_job_s3_tables.py.j2, off for the
+    other four — so an existing pipeline of ANY target type renders exactly what
+    it rendered before. Read that function for why a flat `False` default was
+    rejected: it would have stripped the block from every existing S3 Tables
+    pipeline, which is the same silent reclassification pointing the other way.
+
+    `is defined and`, NOT THE DEFAULT-VALUE FILTER, AND NOT A BARE `{% if %}`.
+    Three options, and the middle one is forbidden outright: the default-value
+    filter is do-NOT 6 — under two jinja2 copies in one process it hands a foreign
+    `missing` sentinel straight through, which is how all 18 tests in
+    `test_code_generation_e2e.py` broke once (see `_load_counts.py.j2`'s header).
+    `test_dq_template_vars_contract.py` scans this file for that filter's name and
+    the count must stay zero, which is why this paragraph does not spell it —
+    a fence asserted by substring counts its own documentation as a violation
+    (`LGR-b46a5bb-4`, and the note at the foot of this header).
+
+    A BARE `{% if data_quality_enabled %}` was the first choice and was reverted:
+    under StrictUndefined it makes an omitted variable a loud render error, which
+    reads as the safer option but forces every render site in the test suite —
+    roughly twenty modules, plus the golden snapshots — to supply a variable that
+    has nothing to do with what they assert. That is churn with its own breakage
+    risk and no bearing on R6.6.
+
+    `is defined and` is the SAME idiom `dqdl_rules` beside it already uses, for the
+    same reason, and it fails CLOSED: an omitted variable disables the block, never
+    enables it, which is the correct direction for a gate whose entire purpose is
+    "do not turn this on for anyone who did not ask". Its jinja2-copies hazard is
+    the one 2b.3 already analysed and dismissed — `is defined` only consults
+    sentinel identity for an UNSET variable, and `code_assembly.generate_code`
+    sets this one unconditionally on every production render, so it is answered by
+    a real value. `test_dq_block_survives_a_second_jinja2_copy_in_sys_modules`
+    covers it.
+
+    THE COST, STATED RATHER THAN HIDDEN. A render site that omits the variable
+    gets DQ off even for glue_job_s3_tables.py.j2, whose production default is ON —
+    so such a site no longer reflects production for that one template. The
+    load-bearing guard is therefore upstream and mechanical:
+    `test_every_p64_partial_variable_is_set_unconditionally_in_template_vars` reads
+    the whole variable surface of every partial p64 owns — this one and
+    `_dedup.py.j2` since 2c.3 — and fails if `data_quality_enabled` is ever missing
+    from `template_vars`, assigned inside an `if`, or routed through the
+    source_config/target_config splat. Loudness moved from the template to
+    that test; it did not go away.
+
+    THE FENCE THAT MOVING THIS BLOCK IS MOST LIKELY TO BREAK (p64 do-NOT 5 /
+    R6.3). There are two sibling statement groups inside the `dqdl_rules` arm of
+    the `evaluate` stage, and they are NOT nested:
+
+      1. the EvaluateDataQuality call, wrapped in a `try:` whose handlers
+         downgrade any failure to `logger.warning` — deliberately non-blocking,
+         because a missing awsgluedq or a DQ service error must not fail a job
+         whose data is fine;
+      2. the row split and the quarantine parquet write, at the SAME indent as
+         that `try:` and therefore OUTSIDE it.
+
+    Group 2 must never migrate inside group 1's `try`. The natural cut points
+    for an extraction are exactly the `try` edges, which is why this is called
+    out here rather than left to the reader: once rules have evaluated WITH
+    failures, a quarantine-write failure must fail the job rather than lose
+    rows. Swallowed, it silently drops the failing rows — the row-loss defect
+    the whole quarantine mechanism exists to prevent. The block carries its own
+    "deliberately OUTSIDE the non-blocking try/except above" comment in the
+    emitted Python; that comment is load-bearing, not decoration.
+
+    RELATEDLY (R6.4): the `RuntimeError` that refuses to continue when rows
+    failed and no quarantine bucket is configured is preserved VERBATIM —
+    message text, wrapping and all. It is the fail-closed arm of the same
+    guarantee. Do not reword it, re-indent it into a different string, or
+    soften it to a warning.
+
+    THE NON-PRINTABLE CHARACTER CHECK (p64 R8) FLAGS; IT DOES NOT QUARANTINE, AND
+    ITS PREDICATE DOES NOT COME THROUGH THIS PARTIAL (p64 task 2d.1) — only its
+    `checks[]` entry does, from the 'report' stage, as the later section on that
+    entry's emission site explains. Recorded here
+    rather than only at its own site, because this is the file a reader arrives
+    at when they wonder why a second row-level check does not reuse the
+    quarantine write below — and "reuse the existing mechanism" is the obvious
+    first idea. R8.1 permits either arm ("flags or quarantines") and R8.3 is
+    written conditionally ("IF the check quarantines"), so this was a live
+    choice, not a reading of the requirement. Four facts decided it, and the
+    first is about the code immediately below:
+
+      1. NO DQDL RULE CAN FAIL ON A CONTROL CHARACTER, so the quarantine write
+         is not on a live path for this signal. `_generate_dqdl_rules` emits
+         exactly `RowCount > 0`, `Completeness "f" >= 0.95` and
+         `Uniqueness "f" >= 0.95`; none inspects a character class (R8.2, which
+         is why the check must be a Spark predicate at all). A row carrying NUL,
+         BEL or ESC therefore passes every rule this system can express, so
+         `_dq_fail_count` is 0 on precisely the runs the check exists to catch —
+         and the quarantine write below sits inside
+         `if _dq_fail_count > 0 and _dq_results is not None`. Quarantining would
+         mean making that write reachable with `_dq_fail_count == 0`, i.e.
+         restructuring the fenced region whose entire point (do-NOT 5 / R6.3) is
+         that it is not entered casually. Flagging touches none of it.
+
+      2. QUARANTINE COULD NOT HONOUR R8.1'S PER-PIPELINE OPT-IN ON FOUR OF THE
+         FIVE TEMPLATES WITHOUT UNDOING 2b.4. The quarantine write renders only
+         inside this file's `data_quality_enabled … and dqdl_rules` guard, and
+         `code_assembly.resolve_data_quality_enabled` defaults that OFF for
+         every template except `glue_job_s3_tables.py.j2`. So a JDBC-target
+         pipeline that opts into the character check and leaves DQ alone would
+         render a job containing no check — a silent no-op, which is the class
+         of defect p64 exists to remove. Giving the check its own guard AND a
+         path to this quarantine write would hand row-level splitting and a
+         quarantine write to a target type that never had them: exactly the
+         R6.6 reclassification `resolve_data_quality_enabled` was written to
+         prevent. A flag needs neither — a predicate plus a count renders under
+         its own `quality_config` guard on all five, independent of
+         `data_quality_enabled`.
+
+      3. QUARANTINE WOULD FOLD A THIRD ROW-LOSS CAUSE INTO `rows_quarantined`,
+         which is the misattribution R7.6 forbade one task earlier. Read as "add
+         to the same counter", R8.3 makes that number mean "rows that failed a
+         DQDL rule UNION rows containing a control character". 2c.4 spent a whole
+         task establishing the opposite standard — `rows_read - rows_written`
+         stays decomposable, and dedup drops get their own `rows_deduplicated`
+         key rather than being absorbed here. A flag keeps the decomposition
+         intact by construction: no rows are lost, so there is no term to
+         attribute. R8.3's "same report" is still honoured, as a `checks[]` entry
+         on this same `(run_id, "data_quality")` row.
+
+      4. THE REPORT ROW IS ONE `put_item`, SO A SECOND WRITER OVERWRITES RATHER
+         THAN MERGES (`LGR-9e76249-3`: the Glue runtime role is PutItem-only on
+         the state table, with no UpdateItem). A quarantining check wanting its
+         own counters on this row would have to sit inside the `_dq_report` dict
+         built in the 'report' stage — i.e. inside the DQ gate, back to (2) — or
+         write a second row that clobbers the first. A `checks[]` entry is added
+         to the dict already being built: one put_item, unchanged.
+
+    WHAT THE REJECTED ARM WOULD HAVE DONE, AND TO WHOM. Quarantine diverts the
+    row: it never reaches the target, and it lands under
+    `s3://<bucket>/quarantine/<run_id>/`.
+      * The operator who opted in loses rows. Control-character contamination is
+        usually systematic — a bad export encoding, not a stray byte — so this is
+        rarely a few rows; one BEL in a trailing notes column removes that whole
+        row from the load, and a mis-encoded file removes all of them.
+      * The report reader gets `overall_status: fail` on a run whose declared
+        rules all passed, and a `rows_quarantined` that no longer answers "how
+        many rows failed a data-quality rule".
+      * `shared/load_outcome.py` gains a fourth unnamed term in
+        `rows_read - rows_written`, so `derive_load_outcome` reports
+        `partial_load` for a run whose only problem is encoding, with nothing on
+        the row saying so.
+      * Anyone with no `quarantine_bucket` configured gets a FAILING job rather
+        than a flag, because quarantine inherits R6.4's `RuntimeError` above.
+        Correct for DQ; a poor trade for opting into a character check.
+
+    WHAT FLAGGING GIVES UP, STATED RATHER THAN HIDDEN: the control characters
+    reach the target. A NUL in a string column is a real defect for a downstream
+    consumer and a flag does not stop it. Accepted, because the check is off by
+    default so no existing pipeline's data changes; because the report finding
+    this answers was that the contamination went UNDETECTED, and detection is
+    what a flag delivers; and because the asymmetry of regret runs one way —
+    quarantine stays available later against the same predicate and the same
+    `quality_config` key, whereas walking back a quarantine that has been
+    silently removing rows costs an operator data they cannot recover from a
+    report. `LGR-9e76249-1` is the precedent in this same domain: `partial_load`
+    was made display-only and a threshold that fails the run was rejected,
+    because a signal must have a reader before it has a writer.
+
+    CONSEQUENTLY, TWO THINGS THIS PARTIAL'S 'report' STAGE MUST NOT BE MADE TO
+    DO. Its `overall_status` is derived from `_dq_fail_count` over DQDL rule
+    outcomes; a flag that does not gate the write must not flip it, so the
+    character check's `checks[]` entry carries status `warning` — the third
+    value `QualityCheck.status` already admits, which
+    `QualityReportCard.checkStatusType` already renders. And `_dq_rows_quarantined`
+    stays the DQ split's own number: nothing from R8 is added to it.
+
+    WHERE THAT ENTRY IS EMITTED, since 2d.2 built it: HERE, inline in the 'report'
+    stage, between the DQDL rule loop and the `_dq_report` dict, behind its own
+    `quality_config.nonprintable_check_enabled` guard. NOT from the check's own
+    partial, and the reason is `LGR-9e76249-3` (the report row is one `put_item`
+    on a PutItem-only role, so a second writer clobbers rather than merges): the
+    entry has to be appended to the `_dq_checks` list already being built inside
+    this file, which is not a point a caller can reach with an include. The check
+    itself lives in `_partials/_nonprintable_check.py.j2`, included by each
+    template after this partial's 'evaluate' site.
+
+    THE TWO GUARDS MUST STAY IDENTICAL. The append below reads `_adi_np_rows`,
+    which only the check partial defines, and both render on
+    `quality_config is mapping and quality_config.get("nonprintable_check_enabled")
+    is true`. Change one expression without the other and this stage dereferences
+    an undefined name — caught by the surrounding `except Exception as _ddb_err`,
+    so no rows are lost, but the whole DQ report row silently stops being written.
+    `test_nonprintable_check_all_targets.py` pins that both sites render together
+    on all five templates.
+
+    NOTE THE ASYMMETRY THAT FOLLOWS FROM THE CHECK HAVING ITS OWN GATE: the check
+    renders wherever `nonprintable_check_enabled` is set, but this append renders
+    only inside the `data_quality_enabled and dqdl_rules` arm below. A pipeline
+    with the check on and DQ off therefore gets the count and the log line and no
+    durable record — there is no report row for that pipeline at all. Stated in
+    the check partial's header too; closing it needs a row of its own, which is a
+    response-shape decision rather than a template one.
+
+    REQUIRED CONTEXT VARIABLES: `dqdl_rules`, `quarantine_bucket`,
+    `data_quality_enabled` and (since 2d.2) `quality_config`, all four assigned
+    unconditionally in `code_assembly.generate_code`'s `template_vars`
+    (R6.5 / do-NOT 6).
+
+    REQUIRED CALLER VARIABLE: `data_quality_stage`, one of
+
+      'evaluate' — after the transform and any auto-cast/column selection, and
+                   BEFORE `transformed_count` is computed. Emits the evaluation,
+                   the split and the quarantine write, and rebinds
+                   `df_transformed` to the Passed rows.
+      'report'   — AFTER `transformed_count` is computed. Emits the CloudWatch
+                   counters and the `(run_id, "data_quality")` state row. Reads
+                   `transformed_count`, `_dq_rows_quarantined`,
+                   `_dq_quarantine_path`, `_dq_outcomes`, `_dq_fail_count`,
+                   `_dq_total_count`, `_dq_run_id`, `_dq_pipeline_id` and
+                   `_dq_state_table`, all of which the 'evaluate' stage defines.
+
+    THE TWO STAGES ARE ORDERED AND BOTH ARE REQUIRED. 'report' reads locals
+    that only 'evaluate' assigns, and it must sit after `transformed_count`
+    because `rows_passed` IS `transformed_count`. The three lines between them —
+    the blank line, `transformed_count = df_transformed.count()` and its logger
+    — are NOT part of this partial: they render whether or not any DQL rule
+    exists, so they belong to the caller.
+
+    NO DEFAULT STAGE, and the `else` arm below dereferences a name that is
+    deliberately never defined. With StrictUndefined an omitted OR MISTYPED
+    stage then fails the render loudly, naming itself in the error. Following
+    `_partials/_load_counts.py.j2`, which takes `load_counts_stage` the same
+    way and for the same reason. A silent fall-through would be worse here than
+    a wrong value: a mistyped stage would render NOTHING, so the DQ block would
+    simply vanish from a template that appears to include it — which is the
+    exact class of gap R6.1 exists to close.
+
+    INDENTATION IS LITERAL, NOT APPLIED BY A FILTER. The body is written at the
+    4-space `try:`-body indent it needs, rather than at column 0 inside a
+    `filter indent(4)` the way `_load_counts.py.j2` does it. That is a
+    correctness choice, not a style one: `dqdl_rules` is interpolated into a
+    triple-quoted `dq_ruleset` literal, and a real ruleset is multi-line, so an
+    `indent` filter would add leading spaces to its continuation lines and
+    change the DQDL text actually evaluated at runtime. The `_write_*.py.j2`
+    partials carry literal indentation for comparable reasons, so both idioms
+    already exist in this directory.
+
+    ALL of the rationale lives in this Jinja comment and none of it in the
+    emitted Python, per `LGR-b46a5bb-4` (template / ratified): this repo's
+    template fences are substring assertions over the RENDERED output, so
+    naming a fenced token in emitted Python would be counted as an occurrence
+    of it.
+-#}
+{%- if data_quality_stage not in ('evaluate', 'report') -%}
+{{ data_quality_stage_must_be_either_evaluate_or_report }}
+{%- endif -%}
+{%- if data_quality_stage == 'evaluate' -%}
+{# indent-preserving spacer, deliberate — see header #}    # === Glue Data Quality Evaluation ===
+{% if data_quality_enabled is defined and data_quality_enabled and dqdl_rules is defined and dqdl_rules %}
+    # Runtime metadata (--run_id / --pipeline_id / --state_table) is resolved
+    # through the single _runtime_arg mechanism (getResolvedOptions gated on
+    # sys.argv presence, P28 R19.9 — see _runtime_args above). Manual runs fall
+    # back to the Glue-provided JOB_RUN_ID so quarantined rows remain locatable
+    # per run.
+    _dq_run_id = _adi_run_id
+    _dq_pipeline_id = _runtime_arg("pipeline_id")
+    _dq_state_table = _runtime_arg("state_table", "agentic_data_ingestion_state")
+    _dq_quarantine_run_id = _adi_effective_run_id
+    _dq_quarantine_bucket = "{{ quarantine_bucket }}"
+
+    _dq_fail_count = 0
+    _dq_total_count = 0
+    _dq_outcomes = []
+    _dq_results = None
+    try:
+        from awsglue.dynamicframe import DynamicFrame
+        from awsgluedq.transforms import EvaluateDataQuality
+
+        dq_ruleset = """{{ dqdl_rules }}"""
+
+        dq_dyf = DynamicFrame.fromDF(df_transformed, glue_context, "dq_input")
+        dq_results = EvaluateDataQuality().process_rows(
+            frame=dq_dyf,
+            ruleset=dq_ruleset,
+            publishing_options={
+                "dataQualityEvaluationContext": args['JOB_NAME'],
+                "enableDataQualityCloudWatchMetrics": True,
+                "enableDataQualityResultsPublishing": True,
+            },
+            additional_options={
+                "performanceTuning.caching": "CACHE_NOTHING",
+                "publishAggregatedMetrics.status": "ENABLED",
+            },
+        )
+
+        # Collect rule outcomes (small dataset — one row per rule, safe to collect)
+        from awsglue.transforms import SelectFromCollection
+        rule_outcomes = SelectFromCollection.apply(dfc=dq_results, key="ruleOutcomes")
+        _dq_outcomes = rule_outcomes.toDF().collect()
+
+        logger.info("=== Data Quality Results ===")
+        for row in _dq_outcomes:
+            outcome = row["Outcome"]
+            rule = row["Rule"]
+            reason = row["FailureReason"] if row["FailureReason"] else ""
+            logger.info(f"  [{outcome}] {rule} {reason}")
+
+        _dq_fail_count = sum(1 for r in _dq_outcomes if r["Outcome"] == "Failed")
+        _dq_total_count = len(_dq_outcomes)
+        logger.info(f"Data Quality: {_dq_total_count - _dq_fail_count}/{_dq_total_count} rules passed")
+        _dq_results = dq_results
+
+    except ImportError:
+        logger.warning("awsgluedq not available — skipping inline data quality evaluation")
+    except Exception as _dq_err:
+        logger.warning(f"Data quality evaluation failed (non-blocking): {_dq_err}")
+
+    # Split row-level outcomes (P28 R11.1): Passed rows continue to the target
+    # write; Failed rows are QUARANTINED to quarantine/<run_id>/ — never
+    # silently dropped. This block is deliberately OUTSIDE the non-blocking
+    # try/except above: once rules have evaluated with failures, a
+    # quarantine-write failure must fail the job rather than lose rows.
+    _dq_rows_quarantined = 0
+    _dq_quarantine_path = ""
+    if _dq_fail_count > 0 and _dq_results is not None:
+        from awsglue.transforms import SelectFromCollection
+        _dq_row_outcomes = SelectFromCollection.apply(dfc=_dq_results, key="rowLevelOutcomes").toDF()
+        _dq_failed_df = _dq_row_outcomes.filter("DataQualityEvaluationResult != 'Passed'")
+        _dq_passed_df = _dq_row_outcomes.filter("DataQualityEvaluationResult = 'Passed'")
+        _dq_meta_cols = ["DataQualityRulesPass", "DataQualityRulesFail", "DataQualityRulesSkip", "DataQualityEvaluationResult"]
+        for _dq_col in _dq_meta_cols:
+            if _dq_col in _dq_failed_df.columns:
+                _dq_failed_df = _dq_failed_df.drop(_dq_col)
+            if _dq_col in _dq_passed_df.columns:
+                _dq_passed_df = _dq_passed_df.drop(_dq_col)
+        # Rule-level failures do not always map to row-level failures (e.g. a
+        # dataset-level RowCount rule) — only write quarantine parquet when
+        # failing rows actually exist (no empty objects).
+        _dq_rows_quarantined = _dq_failed_df.count()
+        if _dq_rows_quarantined > 0:
+            if not _dq_quarantine_bucket:
+                raise RuntimeError(
+                    "Data quality rows failed but no quarantine bucket is configured — "
+                    "refusing to silently drop failing rows"
+                )
+            _dq_quarantine_path = f"s3://{_dq_quarantine_bucket}/quarantine/{_dq_quarantine_run_id}/"
+            _dq_failed_df.write.mode("overwrite").parquet(_dq_quarantine_path)
+            logger.warning(
+                f"Data Quality: {_dq_fail_count} rule(s) FAILED — quarantined {_dq_rows_quarantined} failing row(s) to {_dq_quarantine_path}"
+            )
+        else:
+            logger.info("Data Quality: no row-level failures — nothing to quarantine")
+        df_transformed = _dq_passed_df
+{% endif %}
+    # === End Data Quality ===
+{%- endif -%}
+{%- if data_quality_stage == 'report' -%}
+{% if data_quality_enabled is defined and data_quality_enabled and dqdl_rules is defined and dqdl_rules %}
+    # === Data Quality counters → job metrics + run state record (P28 R11.1) ===
+    # rows_passed == transformed_count: df_transformed is the Passed split when
+    # any rule failed, or the full frame when all rules passed. Counters are
+    # recorded even when rows_quarantined == 0. Emission is best-effort
+    # telemetry — the row-loss guarantee is the quarantine write above.
+    if _dq_outcomes:
+        try:
+            import boto3 as _boto3
+            _boto3.client("cloudwatch").put_metric_data(
+                Namespace="AgenticDataIngestion/DataQuality",
+                MetricData=[
+                    {
+                        "MetricName": "RowsPassed",
+                        "Value": float(transformed_count),
+                        "Unit": "Count",
+                        "Dimensions": [{"Name": "JobName", "Value": args['JOB_NAME']}],
+                    },
+                    {
+                        "MetricName": "RowsQuarantined",
+                        "Value": float(_dq_rows_quarantined),
+                        "Unit": "Count",
+                        "Dimensions": [{"Name": "JobName", "Value": args['JOB_NAME']}],
+                    },
+                ],
+            )
+            logger.info(f"DQ counters published: rows_passed={transformed_count}, rows_quarantined={_dq_rows_quarantined}")
+        except Exception as _cw_err:
+            logger.warning(f"Failed to publish DQ counters to CloudWatch: {_cw_err}")
+
+    # Write DQ results (including quarantine counters) to DynamoDB for dashboard display
+    if _dq_outcomes and _dq_run_id:
+        try:
+            import boto3 as _boto3
+            import json as _json
+            from datetime import datetime as _dt, timezone as _tz
+            from decimal import Decimal as _Decimal
+
+            _has_metrics = len(_dq_outcomes) > 0 and "EvaluatedMetrics" in _dq_outcomes[0].asDict()
+            _dq_checks = []
+            for _row in _dq_outcomes:
+                _check = {"name": _row["Rule"], "status": "pass" if _row["Outcome"] == "Passed" else "fail"}
+                if _row["FailureReason"]:
+                    _check["failure_reason"] = _row["FailureReason"]
+                if _has_metrics:
+                    _metrics = _row["EvaluatedMetrics"]
+                    if _metrics:
+                        for _mk, _mv in _metrics.items():
+                            _check["actual"] = float(_mv) if _mv is not None else None
+                _dq_checks.append(_check)
+
+{% if quality_config is mapping and quality_config.get("nonprintable_check_enabled") is true %}            # p64 R8.1/R8.3 — the non-printable character check's finding, on
+            # THIS report rather than a second row. Status is `warning`, never
+            # `fail`: the check flags and diverts nothing, so it must not move
+            # overall_status (derived from the DQDL rule outcomes above) and it
+            # adds nothing to rows_quarantined. It is also not counted in
+            # rules_passed/rules_failed/rules_total, which describe the DQDL
+            # ruleset only. `_adi_np_rows` is defined by the check block, which
+            # renders under this same condition.
+            _dq_np_check = {
+                "name": "NonPrintableCharacters",
+                "status": "warning" if _adi_np_rows > 0 else "pass",
+                "actual": float(_adi_np_rows),
+            }
+            if _adi_np_rows > 0:
+                _dq_np_check["failure_reason"] = (
+                    f"{_adi_np_rows} row(s) written to the target contain control characters "
+                    "(flagged, not quarantined)"
+                )
+            _dq_checks.append(_dq_np_check)
+
+{% endif %}{% if quality_config is mapping and quality_config.get("cast_null_check_enabled") is true %}            # p64 R9.1/R9.3 — the type-cast failure count, on THIS report
+            # rather than a second row, and directly beside the Completeness
+            # outcome it corrects. Status is `warning`, never `fail`: no row was
+            # removed from the frame, so this must not move overall_status and
+            # adds nothing to rows_quarantined. It is counted in none of
+            # rules_passed/rules_failed/rules_total, which describe the DQDL
+            # ruleset only.
+            #
+            # The locals() test is REQUIRED, not defensive clutter. The count is
+            # only computable where an auto-cast block exists, so this partial
+            # renders on templates where the check block does not. Without the
+            # test those templates raise NameError inside the enclosing
+            # try/except and lose the ENTIRE report row silently. An unmeasured
+            # run gets NO entry — absent and zero are different claims, and "no
+            # conversion nulled a value" is not something an unmeasured run can
+            # say.
+            if "_adi_cast_null_cells" in locals():
+                _dq_cast_check = {
+                    "name": "TypeCastFailures",
+                    "status": "warning" if _adi_cast_null_cells > 0 else "pass",
+                    "actual": float(_adi_cast_null_cells),
+                }
+                if _adi_cast_null_cells > 0:
+                    _dq_cast_check["failure_reason"] = (
+                        f"{_adi_cast_null_cells} value(s) became NULL converting to the target "
+                        f"type ({_adi_cast_null_detail}) — these had a source value and are not "
+                        f"empty sources, which the completeness rule cannot distinguish. "
+                        f"Rows were kept."
+                    )
+                _dq_checks.append(_dq_cast_check)
+
+{% endif %}            _dq_report = {
+                "run_id": _dq_run_id, "step_name": "data_quality",
+                "pipeline_id": _dq_pipeline_id,
+                "overall_status": "pass" if _dq_fail_count == 0 else "fail",
+                "checks": _dq_checks, "root_cause": None if _dq_fail_count == 0 else "data_issue",
+                "recommendations": [] if _dq_fail_count == 0 else ["Review failed data quality rules"],
+                "source": "glue_inline_dq", "timestamp": _dt.now(_tz.utc).isoformat(),
+                "rules_passed": _dq_total_count - _dq_fail_count,
+                "rules_failed": _dq_fail_count, "rules_total": _dq_total_count,
+                "rows_passed": transformed_count,
+                "rows_quarantined": _dq_rows_quarantined,
+                "quarantine_path": _dq_quarantine_path or None,
+            }
+            _tbl = _boto3.resource("dynamodb").Table(_dq_state_table)
+            _tbl.put_item(Item=_json.loads(_json.dumps(_dq_report, default=str), parse_float=_Decimal))
+            logger.info(f"DQ report written to DynamoDB for run {_dq_run_id}")
+        except Exception as _ddb_err:
+            logger.warning(f"Failed to write DQ results to DynamoDB: {_ddb_err}")
+    # === End Data Quality counters ===
+{% endif %}
+{%- endif -%}

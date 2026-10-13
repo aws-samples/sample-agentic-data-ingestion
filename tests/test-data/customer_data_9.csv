@@ -1,0 +1,6 @@
+user_id,name_first,name_last,primary_email,phone_home,phone_work,date_registered,user_status,address_line1,city,state,zip
+9001,Rachel,Adams,rachel.a@email.com,555-0901,555-0911,2024-08-01,enabled,123 Oak St,Portland,OR,97201
+9002,Thomas,Baker,thomas.b@email.com,555-0902,555-0912,2024-08-02,enabled,456 Pine Ave,Seattle,WA,98101
+9003,Grace,Campbell,grace.c@email.com,555-0903,,2024-08-03,disabled,789 Elm Dr,Denver,CO,80201
+9004,Noah,Dixon,noah.d@email.com,555-0904,555-0914,2024-08-04,enabled,321 Maple Ln,Austin,TX,78701
+9005,Ava,Edwards,ava.e@email.com,555-0905,,2024-08-05,pending,654 Cedar Ct,Miami,FL,33101

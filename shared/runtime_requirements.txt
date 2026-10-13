@@ -1,0 +1,84 @@
+# Canonical pinned dependency manifest for the dual Lambda-layer / AgentCore-
+# container execution path (P28 Requirement 19.6).
+#
+# Consumers:
+#   - Lambda layer: deploy-cdk/lib/compute-stack.ts (StrandsAgentsLayer bundling)
+#     installs this file via `pip install -r /asset-input/shared/runtime_requirements.txt`.
+#   - AgentCore containers: every agentcore/*/requirements.txt pins its shared
+#     dependencies to the exact versions below. Container-only extras (boto3 in
+#     requirements.txt, aws-opentelemetry-distro in the Dockerfile) are pinned
+#     in their own files.
+#
+# Consistency is enforced by tests/unit/agentcore/test_runtime_requirements_pins.py.
+# When bumping a version here, update every agentcore/*/requirements.txt to match.
+#
+# Version provenance: mcp / jinja2 / aws-lambda-powertools / typing-extensions
+# are pinned to the versions installed in the project .venv (what the test suite
+# runs against). strands-agents / strands-agents-tools / bedrock-agentcore are
+# not importable in the test env (mocked in tests) and are pinned to the PyPI
+# releases the previously-unpinned bundling resolved at the time of pinning.
+strands-agents==1.48.0
+strands-agents-tools==0.8.4
+mcp==1.28.1
+jinja2==3.1.6
+aws-lambda-powertools==3.29.0
+bedrock-agentcore==1.18.1
+typing-extensions==4.15.0
+# p55 R6.2 / design §4.6 (W3-D6): the Excel_Workbook reader for
+# `schema_extract`'s `extract_schema_from_excel`. Pure Python, no compiled
+# extensions, and it pulls one transitive dependency (`et_xmlfile`, itself pure
+# Python) which pip resolves — only direct dependencies are pinned here.
+#
+# Layer_Budget: 0.88 MiB recorded for openpyxl 3.1.5 + et_xmlfile 2.0.0 on
+# arm64-manylinux2014 / py3.12 (923,403 bytes, p55 requirements.md R7),
+# against `schema_extract`'s 2.14 MiB of headroom (`LGR-0739ab8-1`: 247.86 of
+# 250 MiB unzipped), leaving 1.26 MiB. Measured locally at 883,202 bytes
+# excluding `__pycache__`, which is the right comparable because the layer
+# bundling deletes `__pycache__` and `*.pyc` after install
+# (`compute-stack.ts:198-200`).
+#
+# Adding a name here needs no `agentcore/*/requirements.txt` edit:
+# `test_container_shared_pins_match_manifest` (`:95-106`) compares only names
+# present in BOTH files, so only a version bump of a SHARED name obliges the
+# containers. `test_manifest_covers_layer_dependency_set` (`:67-79`) asserts a
+# seven-name floor as a subset, so a superset is fine.
+openpyxl==3.1.5
+# ── OpenTelemetry: pinned to match the ADOT managed layer ────────────────────
+# DO NOT unpin these, and do not bump them without checking the ADOT layer.
+#
+# These are transitive dependencies of strands-agents, which asks only for
+# `opentelemetry-api>=1.30.0,<2.0.0`. Left unpinned, the layer bundling's
+# `pip install --upgrade` resolved them to 1.44.0, and that silently broke
+# OpenTelemetry instrumentation on every Lambda that also has the ADOT layer.
+#
+# The mechanism is a layer merge, not a Python resolution failure. Lambda
+# unpacks every layer into one `/opt/python`, so two OpenTelemetry copies land
+# on top of each other:
+#
+#   - ADOT (`aws-otel-python-arm64-ver-1-32-0`) ships api 1.32.0/1.33.1, which
+#     include `opentelemetry/_events/` and define
+#     `_OTEL_PYTHON_EVENT_LOGGER_PROVIDER` in `environment_variables`.
+#   - api 1.44.0 removed BOTH: no `_events/` package, and no such constant.
+#
+# So 1.44.0 overwrote `environment_variables/__init__.py` while ADOT's
+# `_events/` survived — nothing in 1.44.0 replaces a package it no longer has.
+# ADOT's own `instrumentation/botocore` then imports `_events`, which imports
+# the constant that is no longer there:
+#
+#   ImportError: cannot import name '_OTEL_PYTHON_EVENT_LOGGER_PROVIDER'
+#     from 'opentelemetry.environment_variables'
+#
+# It is caught, so the handler still runs and the invocation still returns 200 —
+# which is why this sat unnoticed. What is lost is the instrumentation: the
+# TracerProvider comes up degraded ("TracerProvider was missing `force_flush`").
+#
+# 1.33.1 is the higher of the two versions ADOT ships, so pinning here can only
+# match ADOT or replace it with an equally self-consistent tree — never
+# downgrade it. It also satisfies strands-agents' own floor of >=1.30.0.
+#
+# Not solvable by dropping OpenTelemetry from this manifest instead: some
+# functions (`schema_extract`) deliberately carry NO ADOT layer for size
+# reasons, and for those this manifest is the only source of OpenTelemetry at
+# all, so removing it would make `strands` unimportable there.
+opentelemetry-api==1.33.1
+opentelemetry-sdk==1.33.1

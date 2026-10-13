@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" font-family="'Amazon Ember','Helvetica Neue',Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5F6B7A"/>
+    </marker>
+    <marker id="arO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#B7791F"/>
+    </marker>
+    <marker id="arG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5A8A00"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="700" fill="#FFFFFF"/>
+
+  <text x="600" y="36" text-anchor="middle" font-size="21" font-weight="700" fill="#232F3E">The 10-step ingestion workflow</text>
+  <text x="600" y="58" text-anchor="middle" font-size="13" fill="#5F6B7A">Only steps 1 and 2 differ by source type. Everything from step 3 onward is source-agnostic.</text>
+
+  <!-- ============ Panel A: source-specific ============ -->
+  <rect x="34" y="82" width="1132" height="132" rx="10" fill="#F7F9FC" stroke="#C6D2E1" stroke-width="1.2"/>
+  <text x="50" y="104" font-size="12" font-weight="700" fill="#5F6B7A" letter-spacing="0.6">SOURCE-SPECIFIC</text>
+
+  <!-- sources -->
+  <rect x="50" y="116" width="188" height="38" rx="6" fill="#FFFFFF" stroke="#7AA116" stroke-width="1.6"/>
+  <text x="62" y="133" font-size="12.5" font-weight="700" fill="#232F3E">Amazon S3 upload</text>
+  <text x="62" y="147" font-size="10.5" fill="#5F6B7A">CSV · JSON · Parquet · Avro · ORC</text>
+
+  <rect x="50" y="162" width="188" height="38" rx="6" fill="#FFFFFF" stroke="#C925D1" stroke-width="1.6"/>
+  <text x="62" y="179" font-size="12.5" font-weight="700" fill="#232F3E">JDBC database</text>
+  <text x="62" y="193" font-size="10.5" fill="#5F6B7A">full table or watermark load</text>
+
+  <path d="M 244 135 L 286 135 L 286 148 L 306 148" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#ar)"/>
+  <path d="M 244 181 L 286 181 L 286 148 L 306 148" fill="none" stroke="#5F6B7A" stroke-width="1.6"/>
+
+  <!-- step 1 -->
+  <rect x="312" y="122" width="182" height="54" rx="7" fill="#FFFFFF" stroke="#0972D3" stroke-width="1.6"/>
+  <text x="325" y="141" font-size="11" font-weight="700" fill="#0972D3">STEP 1</text>
+  <text x="325" y="157" font-size="13" font-weight="600" fill="#232F3E">File validation</text>
+  <text x="325" y="170" font-size="10.5" fill="#5F6B7A">HEAD only — no object read</text>
+
+  <path d="M 494 149 L 530 149" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#ar)"/>
+
+  <!-- step 2 -->
+  <rect x="536" y="122" width="182" height="54" rx="7" fill="#FFFFFF" stroke="#0972D3" stroke-width="1.6"/>
+  <text x="549" y="141" font-size="11" font-weight="700" fill="#0972D3">STEP 2</text>
+  <text x="549" y="157" font-size="13" font-weight="600" fill="#232F3E">Schema extraction</text>
+  <text x="549" y="170" font-size="10.5" fill="#5F6B7A">bounded reads · footer metadata</text>
+
+  <path d="M 718 149 L 754 149" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#ar)"/>
+
+  <rect x="760" y="116" width="390" height="66" rx="7" fill="#FFFFFF" stroke="#C6D2E1" stroke-width="1.2"/>
+  <text x="774" y="134" font-size="11.5" font-weight="700" fill="#232F3E">No full file is loaded into memory</text>
+  <text x="774" y="150" font-size="10.5" fill="#5F6B7A">Parquet and ORC schemas come from the file footer; CSV, JSON</text>
+  <text x="774" y="164" font-size="10.5" fill="#5F6B7A">and Avro from a bounded range read. Memory is proportional to</text>
+  <text x="774" y="178" font-size="10.5" fill="#5F6B7A">the sample, not to object size.</text>
+
+  <!-- ============ Panel B: source-agnostic ============ -->
+  <rect x="34" y="230" width="1132" height="308" rx="10" fill="#F5F2FB" stroke="#C3B0E8" stroke-width="1.2"/>
+  <text x="50" y="252" font-size="12" font-weight="700" fill="#6B4FA8" letter-spacing="0.6">SOURCE-AGNOSTIC — identical for files and databases</text>
+
+  <!-- row 1: steps 3-6 -->
+  <g>
+    <rect x="50" y="268" width="240" height="72" rx="7" fill="#FFFFFF" stroke="#8C8FA3" stroke-width="1.5"/>
+    <text x="64" y="288" font-size="11" font-weight="700" fill="#5F6B7A">STEP 3</text>
+    <text x="64" y="306" font-size="13.5" font-weight="600" fill="#232F3E">Schema comparison</text>
+    <text x="64" y="322" font-size="10.5" fill="#5F6B7A">detect drift, classify severity</text>
+
+    <path d="M 290 304 L 326 304" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#ar)"/>
+
+    <rect x="332" y="268" width="240" height="72" rx="7" fill="#FFFFFF" stroke="#8C4FFF" stroke-width="1.8"/>
+    <circle cx="558" cy="280" r="4.5" fill="#8C4FFF"/>
+    <text x="346" y="288" font-size="11" font-weight="700" fill="#8C4FFF">STEP 4</text>
+    <text x="346" y="306" font-size="13.5" font-weight="600" fill="#232F3E">Schema mapping</text>
+    <text x="346" y="322" font-size="10.5" fill="#5F6B7A">per-field confidence scores</text>
+    <rect x="466" y="344" width="106" height="20" rx="10" fill="#FFF4E0" stroke="#B7791F" stroke-width="1.3"/>
+    <text x="519" y="358" text-anchor="middle" font-size="10.5" font-weight="700" fill="#B7791F">GATE 1</text>
+
+    <path d="M 572 304 L 608 304" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#ar)"/>
+
+    <rect x="614" y="268" width="240" height="72" rx="7" fill="#FFFFFF" stroke="#8C4FFF" stroke-width="1.8"/>
+    <circle cx="840" cy="280" r="4.5" fill="#8C4FFF"/>
+    <text x="628" y="288" font-size="11" font-weight="700" fill="#8C4FFF">STEP 5</text>
+    <text x="628" y="306" font-size="13.5" font-weight="600" fill="#232F3E">Code generation</text>
+    <text x="628" y="322" font-size="10.5" fill="#5F6B7A">template + generated transform</text>
+
+    <path d="M 854 304 L 890 304" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#ar)"/>
+
+    <rect x="896" y="268" width="240" height="72" rx="7" fill="#FFFFFF" stroke="#8C4FFF" stroke-width="1.8"/>
+    <circle cx="1122" cy="280" r="4.5" fill="#8C4FFF"/>
+    <text x="910" y="288" font-size="11" font-weight="700" fill="#8C4FFF">STEP 6</text>
+    <text x="910" y="306" font-size="13.5" font-weight="600" fill="#232F3E">Code testing</text>
+    <text x="910" y="322" font-size="10.5" fill="#5F6B7A">real Spark, interactive session</text>
+    <rect x="924" y="344" width="106" height="20" rx="10" fill="#FFF4E0" stroke="#B7791F" stroke-width="1.3"/>
+    <text x="977" y="358" text-anchor="middle" font-size="10.5" font-weight="700" fill="#B7791F">GATE 2</text>
+    <rect x="1036" y="344" width="100" height="20" rx="10" fill="#FFF4E0" stroke="#B7791F" stroke-width="1.3"/>
+    <text x="1086" y="358" text-anchor="middle" font-size="10.5" font-weight="700" fill="#B7791F">GATE 3</text>
+  </g>
+
+  <!-- regenerate loop: rejection at step 6 returns to step 5 -->
+  <path d="M 1016 372 L 1016 384 L 734 384 L 734 342" fill="none" stroke="#B7791F" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arO)"/>
+  <text x="878" y="380" text-anchor="middle" font-size="10.5" font-style="italic" fill="#B7791F">rejected — regenerate</text>
+
+  <!-- wrap connector: step 6 down to step 7 -->
+  <path d="M 1122 372 L 1122 400 L 170 400 L 170 414" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#ar)"/>
+  <text x="646" y="396" text-anchor="middle" font-size="10.5" font-style="italic" fill="#5F6B7A">approved</text>
+
+  <!-- row 2: steps 7-10 -->
+  <g>
+    <rect x="50" y="420" width="240" height="72" rx="7" fill="#FFFFFF" stroke="#8C8FA3" stroke-width="1.5"/>
+    <text x="64" y="440" font-size="11" font-weight="700" fill="#5F6B7A">STEP 7</text>
+    <text x="64" y="458" font-size="13.5" font-weight="600" fill="#232F3E">Provision target</text>
+    <text x="64" y="474" font-size="10.5" fill="#5F6B7A">only if it does not exist</text>
+
+    <path d="M 290 456 L 326 456" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#ar)"/>
+
+    <rect x="332" y="420" width="240" height="72" rx="7" fill="#FFFFFF" stroke="#8C4FFF" stroke-width="1.8"/>
+    <circle cx="558" cy="432" r="4.5" fill="#8C4FFF"/>
+    <text x="346" y="440" font-size="11" font-weight="700" fill="#8C4FFF">STEP 8</text>
+    <text x="346" y="458" font-size="13.5" font-weight="600" fill="#232F3E">Create Glue job</text>
+    <text x="346" y="474" font-size="10.5" fill="#5F6B7A">parameter contract validated</text>
+
+    <path d="M 572 456 L 608 456" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#ar)"/>
+
+    <rect x="614" y="420" width="240" height="72" rx="7" fill="#FFFFFF" stroke="#8C8FA3" stroke-width="1.5"/>
+    <text x="628" y="440" font-size="11" font-weight="700" fill="#5F6B7A">STEP 9</text>
+    <text x="628" y="458" font-size="13.5" font-weight="600" fill="#232F3E">Quality rules</text>
+    <text x="628" y="474" font-size="10.5" fill="#5F6B7A">DQDL derived from mappings</text>
+
+    <path d="M 854 456 L 890 456" fill="none" stroke="#5F6B7A" stroke-width="1.6" marker-end="url(#ar)"/>
+
+    <rect x="896" y="420" width="240" height="72" rx="7" fill="#FFFFFF" stroke="#7AA116" stroke-width="1.8"/>
+    <text x="910" y="440" font-size="11" font-weight="700" fill="#5A8A00">STEP 10</text>
+    <text x="910" y="458" font-size="13.5" font-weight="600" fill="#232F3E">Run the pipeline</text>
+    <text x="910" y="474" font-size="10.5" fill="#5F6B7A">AWS Glue 5.0 Spark job</text>
+  </g>
+
+  <path d="M 1016 492 L 1016 552" fill="none" stroke="#5A8A00" stroke-width="1.8" marker-end="url(#arG)"/>
+
+  <!-- ============ Panel C: targets ============ -->
+  <rect x="34" y="556" width="1132" height="82" rx="10" fill="#F4F8EC" stroke="#A8C46A" stroke-width="1.2"/>
+  <text x="50" y="578" font-size="12" font-weight="700" fill="#5A8A00" letter-spacing="0.6">THREE TARGET TYPES — overwrite · append · merge</text>
+
+  <rect x="50" y="588" width="350" height="34" rx="6" fill="#FFFFFF" stroke="#7AA116" stroke-width="1.4"/>
+  <text x="225" y="609" text-anchor="middle" font-size="12" fill="#232F3E">Amazon S3 Tables (Iceberg)</text>
+
+  <rect x="418" y="588" width="350" height="34" rx="6" fill="#FFFFFF" stroke="#7AA116" stroke-width="1.4"/>
+  <text x="593" y="609" text-anchor="middle" font-size="12" fill="#232F3E">JDBC database</text>
+
+  <rect x="786" y="588" width="350" height="34" rx="6" fill="#FFFFFF" stroke="#7AA116" stroke-width="1.4"/>
+  <text x="961" y="609" text-anchor="middle" font-size="12" fill="#232F3E">Amazon S3 (partitioned Parquet)</text>
+
+  <!-- ============ legend ============ -->
+  <circle cx="52" cy="663" r="4.5" fill="#8C4FFF"/>
+  <text x="64" y="667" font-size="11" fill="#5F6B7A">Amazon Bedrock model call</text>
+
+  <rect x="256" y="654" width="52" height="18" rx="9" fill="#FFF4E0" stroke="#B7791F" stroke-width="1.3"/>
+  <text x="282" y="667" text-anchor="middle" font-size="10" font-weight="700" fill="#B7791F">GATE</text>
+  <text x="318" y="667" font-size="11" fill="#5F6B7A">human approval — <tspan font-style="italic">waitForTaskToken</tspan>, 72-hour window, fails closed</text>
+
+  <line x1="820" y1="663" x2="856" y2="663" stroke="#B7791F" stroke-width="1.5" stroke-dasharray="5,4"/>
+  <text x="864" y="667" font-size="11" fill="#5F6B7A">rejection path</text>
+</svg>

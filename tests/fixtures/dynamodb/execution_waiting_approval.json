@@ -1,0 +1,17 @@
+{
+  "run_id": "exec-run-001",
+  "pipeline_key": "pipeline-abc123",
+  "status": "waiting_approval",
+  "started_at": "2024-01-15T10:35:00Z",
+  "steps_status": {
+    "file_validation": "succeeded",
+    "schema_extraction": "succeeded",
+    "schema_comparison": "succeeded",
+    "schema_mapping": "waiting_approval"
+  },
+  "current_step": "schema_mapping",
+  "pending_approval_id": "approval-xyz789",
+  "schema_version": 1,
+  "file_key": "uploads/customer_data.csv",
+  "source_format": "csv"
+}

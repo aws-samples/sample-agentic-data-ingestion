@@ -1,0 +1,33 @@
+# Every entry is an exact pin. Names shared with agentcore/*/requirements.txt
+# and uv.lock use those versions; the OpenTelemetry trio matches the exact pins
+# aws-opentelemetry-distro 0.18.0 declares. Enforced by
+# tests/unit/agentcore/test_container_dependencies_pinned.py.
+
+# Core MCP dependencies
+mcp==1.28.1
+bedrock-agentcore==1.18.1
+
+# AWS dependencies
+boto3==1.43.33
+botocore==1.43.33
+
+# Data processing and utilities
+pydantic==2.13.4
+loguru==0.7.3
+requests==2.34.2
+pyyaml==6.0.3
+cachetools==6.2.4
+
+# Additional utilities for AgentCore
+python-dateutil==2.9.0.post0
+typing-extensions==4.16.0
+
+# HTTP client for MCP
+httpx==0.28.1
+aiohttp==3.14.4
+
+# OpenTelemetry — AgentCore Observability
+aws-opentelemetry-distro==0.18.0
+opentelemetry-api==1.42.1
+opentelemetry-sdk==1.42.1
+opentelemetry-exporter-otlp-proto-http==1.42.1

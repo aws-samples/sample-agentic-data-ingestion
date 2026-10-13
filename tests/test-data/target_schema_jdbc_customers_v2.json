@@ -1,0 +1,88 @@
+{
+  "schema_name": "jdbc_customers_target",
+  "version": "2.0",
+  "description": "Target schema for the JDBC test-fixture MySQL table appdb.customers - full_name split into first_name and last_name. Same schema_name as v1 so the two are versions of one schema rather than two unrelated schemas.",
+  "fields": [
+    {
+      "name": "customer_id",
+      "type": "integer",
+      "required": true,
+      "description": "Unique customer identifier. Maps from the source column 'id'."
+    },
+    {
+      "name": "email_address",
+      "type": "string",
+      "required": true,
+      "format": "email",
+      "max_length": 255,
+      "description": "Customer email address. Maps from the source column 'email'."
+    },
+    {
+      "name": "first_name",
+      "type": "string",
+      "required": true,
+      "max_length": 128,
+      "description": "Customer given name. Derived from the FIRST whitespace-separated token of the source column 'name'. The source has no separate given-name column."
+    },
+    {
+      "name": "last_name",
+      "type": "string",
+      "required": true,
+      "max_length": 128,
+      "description": "Customer family name. Derived from the REMAINDER of the source column 'name' after the first whitespace-separated token. The source has no separate family-name column."
+    },
+    {
+      "name": "registration_date",
+      "type": "date",
+      "required": true,
+      "format": "YYYY-MM-DD",
+      "description": "Date the customer registered. Maps from the source column 'created_at', which is a TIMESTAMP and must be narrowed to a date."
+    },
+    {
+      "name": "region_code",
+      "type": "string",
+      "required": true,
+      "max_length": 64,
+      "enum": ["us-west", "us-east", "eu-west", "ap-south"],
+      "description": "Customer region. Maps from the source column 'region'. The fixture data cycles through exactly these four values."
+    },
+    {
+      "name": "account_status",
+      "type": "string",
+      "required": false,
+      "enum": ["active", "inactive", "pending"],
+      "description": "Account status. NO source column supplies this — appdb.customers has no status column. Present on purpose to exercise the unsourced-target-field path."
+    }
+  ],
+  "constraints": {
+    "primary_key": ["customer_id"],
+    "unique_fields": ["email_address"],
+    "not_null_fields": ["customer_id", "email_address", "first_name", "last_name", "registration_date", "region_code"]
+  },
+  "metadata": {
+    "created_by": "AgenticDataIngestion Pipeline",
+    "created_date": "2026-09-15",
+    "last_updated": "2026-09-15",
+    "data_classification": "internal",
+    "retention_period": "7_years",
+    "source_fixture": {
+      "connection": "agentic-data-ingestion-test-fixtures-mysql-source",
+      "jdbc_schema": "appdb",
+      "jdbc_table": "customers",
+      "source_columns": ["id", "email", "name", "created_at", "region"],
+      "row_count": 50
+    },
+    "change_log": [
+      {
+        "version": "1.0",
+        "date": "2026-09-15",
+        "changes": "Initial schema - every field renamed relative to the source"
+      },
+      {
+        "version": "2.0",
+        "date": "2026-09-15",
+        "changes": "Split full_name into first_name and last_name. One source column now feeds two required target fields, which is a transform rather than a rename."
+      }
+    ]
+  }
+}

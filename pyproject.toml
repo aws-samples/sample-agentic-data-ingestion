@@ -1,0 +1,122 @@
+[project]
+name = "agentic_data_ingestion"
+version = "0.1.0"
+requires-python = ">=3.12"
+license = { text = "MIT-0" }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.9.0",
+    "bandit>=1.8.0",
+    "mypy>=1.14.0",
+    "boto3-stubs[dynamodb,s3,sqs,stepfunctions,glue,events,lambda,logs,cloudwatch]>=1.36.0",
+    "openpyxl>=3.1.0",
+    "websocket-client>=1.6.0",
+    "pyarrow>=14.0.0",
+    # Dev-only Avro writer for tests/fixtures/data/generate_binary_fixtures.py.
+    # Deliberately NOT in the Lambda layer: it needs 12.70 MiB against 2.14 MiB
+    # of headroom, so schema_extract parses the OCF header by hand instead
+    # (p46 R7.2, .kiro/specs/p46-avro-orc-schema-extraction/layer-measurement.md).
+    "fastavro>=1.9.0",
+    "pytest>=9.0.0",
+    "pytest-cov>=7.0.0",
+    "pytest-xdist>=3.5.0",
+    "hypothesis>=6.100.0",
+    "moto[all]>=5.0.0",
+    "boto3>=1.34.0",
+    "requests>=2.31.0",
+    "aws-lambda-powertools>=2.0",
+    "jinja2>=3.1",
+    "mcp>=1.0",
+    "loguru>=0.7",
+]
+
+# ── Ruff (lint + format) ──────────────────────────────────────────────
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+src = ["lambda", "shared", "mcp", "tests"]
+# Golden PySpark scripts are byte-exact expected-output fixtures for the
+# template-snapshot tests. They must match the generator's output verbatim, so
+# ruff must never reformat them (e.g. import-sorting would break the snapshots).
+extend-exclude = ["tests/fixtures/golden_scripts"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "S",    # flake8-bandit (security)
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "S101",   # assert used in tests
+    "S105",   # hardcoded password (false positives on env var names)
+    "S108",   # /tmp usage (Lambda writes to /tmp)
+    "S110",   # try-except-pass (used intentionally in fallback patterns)
+    "S104",   # hardcoded-bind-all-interfaces (MCP servers bind 0.0.0.0 in Docker)
+    "E501",   # line length handled by formatter
+    "E402",   # module-import-not-at-top (Lambda sys.path.append pattern)
+    "B008",   # function call in default arg (common in Lambda patterns)
+    "RUF013", # implicit-optional (too noisy to fix in bulk)
+    "RUF001", # ambiguous-unicode-character-string (false positives on smart quotes in prompts)
+    "RUF002", # ambiguous-unicode-character-docstring
+    "RUF003", # ambiguous-unicode-character-comment
+    "RUF012", # mutable-class-default (FastMCP patterns)
+    "SIM102", # collapsible-if (readability preference)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "B011"]
+"scripts/**" = ["S"]
+"mcp/**" = ["S701"]  # jinja2-autoescape-false (MCP servers don't render HTML)
+
+[tool.ruff.lint.isort]
+known-first-party = ["shared", "env_utils", "metrics_facade", "eventbridge_utils", "artifact_schema"]
+
+# ── Bandit (security) ─────────────────────────────────────────────────
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", "node_modules"]
+skips = ["B101", "B108"]
+
+# ── Mypy (type checking) ─────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+ignore_missing_imports = true
+# Every Lambda dir names its entrypoint ``lambda_function.py``. Without this,
+# mypy aborts with "Duplicate module named 'lambda_function'" and checks almost
+# nothing under lambda/. Treating each first-party src root as a package base
+# maps the identically-named files to distinct modules so the checker runs.
+explicit_package_bases = true
+exclude = [
+    "tests/",
+    ".venv/",
+    "node_modules/",
+    "deploy-cdk/",
+    "dashboard-react/",
+]
+
+[[tool.mypy.overrides]]
+module = "shared.*"
+disallow_untyped_defs = true
+
+# ── Pytest ────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short --strict-markers -m 'not e2e and not integration'"
+markers = [
+    "unit: fast isolated unit tests",
+    "contract: API/event schema contract tests",
+    "integration: multi-Lambda flow tests with moto",
+    "e2e: end-to-end tests against real AWS",
+    "slow: tests exceeding time budget thresholds",
+    "cdk: CDK infrastructure assertion tests",
+]

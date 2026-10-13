@@ -1,0 +1,11 @@
+# Shared dependencies are pinned to the exact versions in shared/runtime_requirements.txt
+# (the canonical dual-path manifest, P28 Req 19.6). Container-only deps (boto3 here,
+# aws-opentelemetry-distro in the Dockerfile) are pinned too. Consistency is enforced
+# by tests/unit/agentcore/test_runtime_requirements_pins.py.
+bedrock-agentcore==1.18.1
+strands-agents[otel]==1.48.0
+strands-agents-tools==0.8.4
+mcp==1.28.1
+boto3==1.43.33
+aws-lambda-powertools==3.29.0
+typing-extensions==4.15.0

@@ -1,0 +1,26 @@
+-- Postgres seed file for AgenticDataIngestion test fixtures (P18).
+-- This file is intentionally empty of DDL and DML.
+--
+-- Why no schema?
+--   * The Aurora-Postgres-15 cluster's defaultDatabaseName setting creates
+--     an empty testdb database the moment the cluster reaches AVAILABLE,
+--     so no Postgres-side CREATE DATABASE is required (and CREATE DATABASE
+--     cannot run inside a transaction over a non-existent database anyway).
+--   * Application tables on the Postgres target are created at runtime by
+--     the AgenticDataIngestion Glue ETL job's first write -- pre-creating them here
+--     would short-circuit the table-creation code path that V1 explicitly
+--     wants to exercise.
+--
+-- The single SELECT 1 statement below is a connectivity health check the
+-- seeding Lambda runs against the testdb database after the cluster comes
+-- up. If the connect-and-execute round-trip succeeds, the Custom Resource
+-- reports SUCCESS to CloudFormation. If it fails (network reachability,
+-- credentials, missing testdb), CloudFormation rolls back with the
+-- pg8000 error message attached so the operator can diagnose.
+--
+-- Every statement is terminated by a single semicolon so the seeding
+-- lambda's naive _split_statements helper can split on the semicolon and
+-- execute each fragment in turn. No comment line in this file contains a
+-- semicolon, so the naive split is safe.
+
+SELECT 1;

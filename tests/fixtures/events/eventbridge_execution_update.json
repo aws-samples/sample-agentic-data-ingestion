@@ -1,0 +1,28 @@
+{
+  "version": "0",
+  "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+  "detail-type": "AgenticDataIngestion Execution Update",
+  "source": "agentic_data_ingestion.execution-updater",
+  "account": "123456789012",
+  "time": "2024-01-15T10:35:00Z",
+  "region": "us-east-1",
+  "resources": [],
+  "detail": {
+    "pipeline_id": "pipeline-001",
+    "run_id": "run-001",
+    "status": "RUNNING",
+    "current_step": "SchemaExtract",
+    "previous_step": "FileValidation",
+    "started_at": "2024-01-15T10:30:00Z",
+    "updated_at": "2024-01-15T10:35:00Z",
+    "steps_status": {
+      "FileValidation": "SUCCEEDED",
+      "SchemaExtract": "RUNNING",
+      "SchemaCompare": "PENDING",
+      "SchemaMapping": "PENDING",
+      "CreateCode": "PENDING",
+      "TestCode": "PENDING",
+      "RunPipeline": "PENDING"
+    }
+  }
+}

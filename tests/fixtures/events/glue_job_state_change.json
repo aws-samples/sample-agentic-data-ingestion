@@ -1,0 +1,24 @@
+{
+  "version": "0",
+  "id": "abcdef01-2345-6789-abcd-ef0123456789",
+  "detail-type": "Glue Job State Change",
+  "source": "aws.glue",
+  "account": "123456789012",
+  "time": "2024-01-15T10:42:00Z",
+  "region": "us-east-1",
+  "resources": [],
+  "detail": {
+    "jobName": "agentic-data-ingestion-pipeline-abc123-etl",
+    "severity": "INFO",
+    "state": "SUCCEEDED",
+    "jobRunId": "jr_abcdef0123456789abcdef0123456789",
+    "message": "Job run succeeded",
+    "startedOn": "2024-01-15T10:38:00Z",
+    "completedOn": "2024-01-15T10:42:00Z",
+    "executionTime": 240,
+    "timeout": 2880,
+    "maxCapacity": 2.0,
+    "workerType": "G.1X",
+    "numberOfWorkers": 2
+  }
+}

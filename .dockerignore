@@ -1,0 +1,85 @@
+# Build context for the NINE AgentCore agent images is this directory:
+# deploy-cdk/lib/agentcore-stack.ts passes `directory: projectRoot` for
+# CreateCode / TestCode / CreateGluePipeline / CreateInfra / SelfHealing /
+# ComplexMapping / DataQuality / CostOptimization / NLPipelineBuilder.
+# DockerImageAsset reads this file (IgnoreMode.DOCKER), so it governs both what
+# CDK stages into cdk.out/asset.* AND what `docker build` sees at deploy time.
+#
+# Those nine Dockerfiles COPY exactly four trees — verified against every
+# COPY/ADD line in agentcore/*/Dockerfile:
+#   agentcore/<agent>/{requirements.txt,main.py}
+#   shared/
+#   lambda/agentic_data_ingestion_{create_code,test_code,create_glue_pipeline,create_infrastructure}/
+#   pyspark_templates/                                    (create_code only)
+#
+# Everything else is dead weight. Before this list one staged context measured
+# 3.1 GiB, 2.8 GiB of which was deploy-cdk/cdk.out.stale-* — so every synth
+# produced a fresh content hash, no asset ever cache-hit, and all nine images
+# restaged and orphaned the previous generation.
+#
+# If you add a COPY/ADD to an agent Dockerfile, add a matching `!negation`
+# here. An over-broad entry here does NOT fail synth; it fails `docker build`
+# at deploy time, which is much later and much more expensive.
+
+# ── Sibling project trees. No agent Dockerfile COPYs from any of these. ──
+# deploy-cdk is first and most important: it holds cdk.out (tens of GiB), so
+# including it made every build context embed the previous synth's output.
+deploy-cdk
+dashboard-react
+mcp
+tests
+docs
+diagram
+scripts
+lib
+.kiro
+.agents
+.claude
+.vscode
+
+# ── Generated / build output, at any depth ──
+**/cdk.out
+**/cdk.out.*
+**/node_modules
+**/.venv
+**/venv
+**/dist
+**/*.tsbuildinfo
+**/*.egg-info
+
+# ── Caches, at any depth ──
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.mypy_cache
+**/.ruff_cache
+**/.pytest_cache
+**/.hypothesis
+**/.coverage
+**/.coverage.*
+**/htmlcov
+
+# ── VCS and editor cruft ──
+.git
+.gitignore
+**/.DS_Store
+**/*.swp
+
+# ── Local developer environment: never bake these into a published image ──
+.env
+.env.*
+
+# ── Root-level docs and tooling manifests. Not COPY'd, and excluding them
+#    keeps the image asset hash from churning every time a README is edited. ──
+/README.md
+/QUICKSTART.md
+/CONTRIBUTING.md
+/CODE_OF_CONDUCT.md
+/LICENSE
+/Makefile
+/pyproject.toml
+/uv.lock
+/package.json
+/package-lock.json
+/skills-lock.json
+/deploy.sh

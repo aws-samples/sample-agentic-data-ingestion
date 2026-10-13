@@ -1,0 +1,22 @@
+{
+  "files": [
+    {
+      "file_key": "uploads/customer_data.csv",
+      "pipeline_key": "pipeline-abc123",
+      "processed_at": "2024-01-15T10:35:00Z",
+      "execution_id": "exec-run-001"
+    },
+    {
+      "file_key": "uploads/customer_data_v2.csv",
+      "pipeline_key": "pipeline-abc123",
+      "processed_at": "2024-01-16T09:00:00Z",
+      "execution_id": "exec-run-002"
+    },
+    {
+      "file_key": "uploads/customer_data_v3.csv",
+      "pipeline_key": "pipeline-abc123",
+      "processed_at": "2024-01-17T11:00:00Z"
+    }
+  ],
+  "total_count": 3
+}

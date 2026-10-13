@@ -1,0 +1,11 @@
+# No build installs this file. The Lambda imports `strands` from the Strands
+# Agents Lambda layer, which pip-installs shared/runtime_requirements.txt
+# (StrandsAgentsLayer in deploy-cdk/lib/compute-stack.ts), and the AgentCore
+# container for this step installs agentcore/test_code/requirements.txt. This
+# file points at the layer's manifest so a manual `pip install -r` gets the
+# same pinned set.
+#
+# The PyPI distribution is `strands-agents`. Do not use `strands-sdk`: that is
+# an unrelated third-party package, which this file named until 2026-10.
+-r ../../shared/runtime_requirements.txt
+boto3>=1.28.0
