@@ -19,7 +19,7 @@
 # releases the previously-unpinned bundling resolved at the time of pinning.
 strands-agents==1.48.0
 strands-agents-tools==0.8.4
-mcp==1.28.1
+mcp==1.30.0
 jinja2==3.1.6
 aws-lambda-powertools==3.29.0
 bedrock-agentcore==1.18.1
