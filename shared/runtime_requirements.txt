@@ -80,5 +80,5 @@ openpyxl==3.1.5
 # functions (`schema_extract`) deliberately carry NO ADOT layer for size
 # reasons, and for those this manifest is the only source of OpenTelemetry at
 # all, so removing it would make `strands` unimportable there.
-opentelemetry-api==1.33.1
+opentelemetry-api==1.45.1
 opentelemetry-sdk==1.33.1
