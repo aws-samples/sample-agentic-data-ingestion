@@ -7,7 +7,7 @@
 # tests/unit/agentcore/test_container_dependencies_pinned.py.
 
 # MCP Framework - FastMCP required for AgentCore compatibility
-fastmcp==3.4.8
+fastmcp==3.4.10
 mcp==1.28.1
 
 # AWS SDK
